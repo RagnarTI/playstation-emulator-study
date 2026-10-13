@@ -73,7 +73,9 @@ def signed_16(valor):
 # ----------------------------------------
 # 4. Interpretador
 # ----------------------------------------
-
+class EnderecoDesalinhadoError(Exception):
+    """Erro ao acessar uma palavra em endereço desalinhado."""
+    
 def executar_programa(memoria, enderecos_programa, pc_inicial,
                       registradores, limite=100):
 
@@ -227,6 +229,48 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
             if rt != 0:
                 registradores[rt] = resultado
 
+        elif opcode == 0x0A:  # SLTI
+            a = signed_32(registradores[rs])
+            resultado = 1 if a < immediate else 0
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x0B:  # SLTIU
+            a = registradores[rs] & MASCARA_32
+            resultado = 1 if a < (immediate & MASCARA_32) else 0
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x0C:  # ANDI
+            imediato = instrucao & 0xFFFF
+            resultado = registradores[rs] & imediato
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x0D:  # ORI
+            imediato = instrucao & 0xFFFF
+            resultado = registradores[rs] | imediato
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x0E:  # XORI
+            imediato = instrucao & 0xFFFF
+            resultado = registradores[rs] ^ imediato
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x0F:  # LUI
+            imediato = instrucao & 0xFFFF
+            resultado = (imediato << 16) & MASCARA_32
+
+            if rt != 0:
+                registradores[rt] = resultado
+
         elif opcode == 0x09:        # ADDIU
             resultado = (
                 registradores[rs] + immediate
@@ -235,20 +279,30 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
             if rt != 0:
                 registradores[rt] = resultado
 
-        elif opcode == 0x23:        # LW
+        elif opcode == 0x23:  # LW
             endereco = (
                 registradores[rs] + immediate
             ) & MASCARA_32
+
+            if endereco % 4 != 0:
+                raise EnderecoDesalinhadoError(
+                    f"LW em endereco desalinhado: 0x{endereco:08X}"
+                )
 
             resultado = read_u32(memoria, endereco)
 
             if rt != 0:
                 registradores[rt] = resultado
 
-        elif opcode == 0x2B:        # SW
+        elif opcode == 0x2B:  # SW
             endereco = (
                 registradores[rs] + immediate
             ) & MASCARA_32
+
+            if endereco % 4 != 0:
+                raise EnderecoDesalinhadoError(
+                    f"SW em endereco desalinhado: 0x{endereco:08X}"
+                )
 
             write_u32(
                 memoria,
@@ -268,6 +322,121 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
                 destino_atrasado = (
                     pc_atual + 4 + (immediate << 2)
                 ) & MASCARA_32
+
+        elif opcode == 0x05:  # BNE
+            if no_delay_slot:
+                raise NotImplementedError(
+                    "BNE dentro de delay slot nao suportado."
+                )
+
+            delay_slot_ativo = True
+
+            if registradores[rs] != registradores[rt]:
+                destino_atrasado = (
+                    pc_atual + 4 + (immediate << 2)
+                ) & MASCARA_32
+
+        elif opcode == 0x06:  # BLEZ
+            if rt != 0:
+                raise NotImplementedError(
+                    "BLEZ com campo rt invalido."
+                )
+
+            if no_delay_slot:
+                raise NotImplementedError(
+                    "BLEZ dentro de delay slot nao suportado."
+                )
+
+            delay_slot_ativo = True
+
+            if signed_32(registradores[rs]) <= 0:
+                destino_atrasado = (
+                    pc_atual + 4 + (immediate << 2)
+                ) & MASCARA_32
+
+        elif opcode == 0x07:  # BGTZ
+            if rt != 0:
+                raise NotImplementedError(
+                    "BGTZ com campo rt invalido."
+                )
+            
+            if no_delay_slot:
+                raise NotImplementedError(
+                    "BGTZ dentro de delay slot nao suportado."
+                )
+
+            delay_slot_ativo = True
+
+            if signed_32(registradores[rs]) > 0:
+                destino_atrasado = (
+                    pc_atual + 4 + (immediate << 2)
+                ) & MASCARA_32
+    
+        elif opcode == 0x01:  # REGIMM
+            if rt == 0x00:  # BLTZ
+                if no_delay_slot:
+                    raise NotImplementedError(
+                        "BLTZ dentro de delay slot nao suportado."
+                    )
+
+                delay_slot_ativo = True
+
+                if signed_32(registradores[rs]) < 0:
+                    destino_atrasado = (
+                        pc_atual + 4 + (immediate << 2)
+                    ) & MASCARA_32
+
+            elif rt == 0x01:  # BGEZ
+                if no_delay_slot:
+                    raise NotImplementedError(
+                        "BGEZ dentro de delay slot nao suportado."
+                    )
+
+                delay_slot_ativo = True
+
+                if signed_32(registradores[rs]) >= 0:
+                    destino_atrasado = (
+                        pc_atual + 4 + (immediate << 2)
+                    ) & MASCARA_32
+
+            elif rt == 0x10:  # BLTZAL
+                if no_delay_slot:
+                    raise NotImplementedError(
+                        "BLTZAL dentro de delay slot nao suportado."
+                    )
+
+                registradores[31] = (
+                    pc_atual + 8
+                ) & MASCARA_32
+
+                delay_slot_ativo = True
+
+                if signed_32(registradores[rs]) < 0:
+                    destino_atrasado = (
+                        pc_atual + 4 + (immediate << 2)
+                    ) & MASCARA_32
+
+            elif rt == 0x11:  # BGEZAL
+                if no_delay_slot:
+                    raise NotImplementedError(
+                        "BGEZAL dentro de delay slot nao suportado."
+                    )
+
+                registradores[31] = (
+                    pc_atual + 8
+                ) & MASCARA_32
+
+                delay_slot_ativo = True
+
+                if signed_32(registradores[rs]) >= 0:
+                    destino_atrasado = (
+                        pc_atual + 4 + (immediate << 2)
+                    ) & MASCARA_32
+
+            else:
+                raise NotImplementedError(
+                    f"REGIMM nao implementado: rt=0x{rt:02X}"
+                )
 
         else:
             raise NotImplementedError(

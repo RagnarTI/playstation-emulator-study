@@ -12,9 +12,11 @@ if PASTA_PROJETO not in sys.path:
 
 from mips_interpreter import (
     write_u32,
+    read_u32,
     encode_r,
     encode_i,
     executar_programa,
+    EnderecoDesalinhadoError,
 )
 
 
@@ -173,6 +175,405 @@ class TestArithmetic(unittest.TestCase):
         )
 
         self.assertEqual(registradores[10], 0xFFFFFFFE)
+
+    def test_slti_verdadeiro(self):
+        instrucao = encode_i(0x0A, 8, 10, 20)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 15},
+        )
+
+        self.assertEqual(registradores[10], 1)
+
+
+    def test_slti_falso(self):
+        instrucao = encode_i(0x0A, 8, 10, 20)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 25},
+        )
+
+        self.assertEqual(registradores[10], 0)
+
+    def test_sltiu_verdadeiro(self):
+        instrucao = encode_i(0x0B, 8, 10, 20)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 15},
+        )
+
+        self.assertEqual(registradores[10], 1)
+
+
+    def test_sltiu_falso(self):
+        instrucao = encode_i(0x0B, 8, 10, 20)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 25},
+        )
+
+        self.assertEqual(registradores[10], 0)
+
+
+    def test_sltiu_com_valor_negativo(self):
+        instrucao = encode_i(0x0B, 8, 10, 20)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[10], 0)
+
+    def test_andi_preserva_bits_inferiores(self):
+        instrucao = encode_i(0x0C, 8, 10, 0x00FF)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[10], 0x78)
+
+
+    def test_andi_imediato_com_bit_15(self):
+        instrucao = encode_i(0x0C, 8, 10, 0x8000)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[10], 0x8000)
+
+    def test_ori_ativa_bits_do_imediato(self):
+        instrucao = encode_i(0x0D, 8, 10, 0x00F0)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12340005},
+        )
+
+        self.assertEqual(registradores[10], 0x123400F5)
+
+
+    def test_ori_imediato_com_bit_15(self):
+        instrucao = encode_i(0x0D, 8, 10, 0x8000)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0},
+        )
+
+        self.assertEqual(registradores[10], 0x00008000)
+
+    def test_xori_inverte_bits_selecionados(self):
+        instrucao = encode_i(0x0E, 8, 10, 0x00FF)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x123400FF},
+        )
+
+        self.assertEqual(registradores[10], 0x12340000)
+
+
+    def test_xori_imediato_com_bit_15(self):
+        instrucao = encode_i(0x0E, 8, 10, 0x8000)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[10], 0xFFFF7FFF)
+
+    def test_lui_carrega_metade_superior(self):
+        instrucao = encode_i(0x0F, 0, 10, 0x1234)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {},
+        )
+
+        self.assertEqual(registradores[10], 0x12340000)
+
+
+    def test_lui_imediato_com_bit_15(self):
+        instrucao = encode_i(0x0F, 0, 10, 0x8000)
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {},
+        )
+
+        self.assertEqual(registradores[10], 0x80000000)
+
+    def test_write_u32_limita_valor_a_32_bits(self):
+        memoria = {}
+
+        write_u32(memoria, 0x1000, 0x12345678ABCDEF01)
+
+        self.assertEqual(
+            read_u32(memoria, 0x1000),
+            0xABCDEF01,
+        )
+
+        self.assertEqual(memoria[0x1000], 0x01)
+        self.assertEqual(memoria[0x1001], 0xEF)
+        self.assertEqual(memoria[0x1002], 0xCD)
+        self.assertEqual(memoria[0x1003], 0xAB)
+
+    def test_read_u32_memoria_vazia_retorna_zero(self):
+        memoria = {}
+
+        resultado = read_u32(memoria, 0x1000)
+
+        self.assertEqual(resultado, 0)
+
+    def test_read_u32_memoria_parcialmente_preenchida(self):
+        memoria = {
+            0x1000: 0x78,
+            0x1001: 0x56,
+        }
+
+        resultado = read_u32(memoria, 0x1000)
+
+        self.assertEqual(resultado, 0x00005678)
+
+    def test_write_u32_altera_apenas_quatro_bytes(self):
+        memoria = {
+            0x0FFF: 0xAA,
+            0x1004: 0xBB,
+        }
+
+        write_u32(memoria, 0x1000, 0x12345678)
+
+        self.assertEqual(memoria[0x0FFF], 0xAA)
+        self.assertEqual(memoria[0x1000], 0x78)
+        self.assertEqual(memoria[0x1001], 0x56)
+        self.assertEqual(memoria[0x1002], 0x34)
+        self.assertEqual(memoria[0x1003], 0x12)
+        self.assertEqual(memoria[0x1004], 0xBB)
+
+    def test_write_u32_e_read_u32_preservam_valor(self):
+        memoria = {}
+        valores = [
+            0x00000000,
+            0x00000001,
+            0x12345678,
+            0xFFFFFFFF,
+        ]
+
+        for valor in valores:
+            write_u32(memoria, 0x1000, valor)
+
+            resultado = read_u32(memoria, 0x1000)
+
+            self.assertEqual(resultado, valor)
+
+    def test_sw_armazena_valor_no_endereco_calculado(self):
+        instrucao = encode_i(
+            0x2B,  # SW
+            1,     # rs: registrador base
+            2,     # rt: registrador com o valor
+            4      # immediate: deslocamento
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1000
+        registradores[2] = 0x12345678
+
+        write_u32(memoria, 0x2000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x2000},
+            0x2000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            read_u32(memoria, 0x1004),
+            0x12345678,
+        )
+
+    def test_lw_carrega_valor_do_endereco_calculado(self):
+        instrucao = encode_i(
+            0x23,  # LW
+            1,     # rs: registrador base
+            2,     # rt: registrador de destino
+            4      # immediate: deslocamento
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1000
+        registradores[2] = 0xAAAAAAAA
+        registradores[3] = 0xBBBBBBBB
+
+        write_u32(memoria, 0x2000, instrucao)
+        write_u32(memoria, 0x1004, 0x12345678)
+
+        executar_programa(
+            memoria,
+            {0x2000},
+            0x2000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x12345678)
+        self.assertEqual(registradores[1], 0x1000)
+        self.assertEqual(registradores[3], 0xBBBBBBBB)
+        self.assertEqual(registradores[0], 0)
+
+    def test_lw_nao_altera_registrador_zero(self):
+        instrucao = encode_i(
+            0x23,  # LW
+            1,     # rs: registrador base
+            0,     # rt: $zero
+            4      # immediate
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1000
+
+        write_u32(memoria, 0x2000, instrucao)
+        write_u32(memoria, 0x1004, 0x12345678)
+
+        executar_programa(
+            memoria,
+            {0x2000},
+            0x2000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[0], 0)
+    
+    def test_lw_com_deslocamento_negativo(self):
+        instrucao = encode_i(
+            0x23,  # LW
+            1,     # rs: registrador base
+            2,     # rt: registrador de destino
+            -4     # immediate: deslocamento negativo
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1004
+
+        write_u32(memoria, 0x2000, instrucao)
+        write_u32(memoria, 0x1000, 0x12345678)
+
+        executar_programa(
+            memoria,
+            {0x2000},
+            0x2000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x12345678)
+
+
+    def test_sw_com_deslocamento_negativo(self):
+        instrucao = encode_i(
+            0x2B,  # SW
+            1,     # rs: registrador base
+            2,     # rt: registrador com o valor
+            -4     # immediate: deslocamento negativo
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1004
+        registradores[2] = 0x12345678
+
+        write_u32(memoria, 0x2000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x2000},
+            0x2000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            read_u32(memoria, 0x1000),
+            0x12345678,
+        )
+
+
+    def test_lw_com_endereco_desalinhado(self):
+        instrucao = encode_i(
+            0x23,  # LW
+            1,     # rs: registrador base
+            2,     # rt: registrador de destino
+            0
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1002
+        registradores[2] = 0xAAAAAAAA
+
+        write_u32(memoria, 0x2000, instrucao)
+
+        with self.assertRaisesRegex(
+            EnderecoDesalinhadoError,
+            "LW em endereco desalinhado: 0x00001002",
+        ):
+            executar_programa(
+                memoria,
+                {0x2000},
+                0x2000,
+                registradores,
+                limite=1,
+            )
+
+        self.assertEqual(registradores[2], 0xAAAAAAAA)
+
+    def test_sw_com_endereco_desalinhado(self):
+        instrucao = encode_i(
+            0x2B,  # SW
+            1,     # rs: registrador base
+            2,     # rt: registrador com o valor
+            0
+        )
+
+        memoria = {}
+        registradores = [0] * 32
+        registradores[1] = 0x1002
+        registradores[2] = 0x12345678
+
+        write_u32(memoria, 0x2000, instrucao)
+
+        memoria_antes = memoria.copy()
+
+        with self.assertRaisesRegex(
+            EnderecoDesalinhadoError,
+            "SW em endereco desalinhado: 0x00001002",
+        ):
+            executar_programa(
+                memoria,
+                {0x2000},
+                0x2000,
+                registradores,
+                limite=1,
+            )
+
+        self.assertEqual(memoria, memoria_antes)
+
 
 
 if __name__ == "__main__":
