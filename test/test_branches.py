@@ -11,24 +11,45 @@ if PASTA_PROJETO not in sys.path:
     sys.path.insert(0, PASTA_PROJETO)
 
 from mips_interpreter import (
-    write_u32,
     encode_i,
     encode_r,
     executar_programa,
 )
+from ram import RAM
+
+
+class MemoriaEsparsa:
+    def __init__(self):
+        self.palavras = {}
+
+    def write_u32(self, endereco, valor):
+        if endereco % 4 != 0:
+            raise ValueError(f"Endereco desalinhado: 0x{endereco:08X}")
+        self.palavras[endereco] = valor & 0xFFFFFFFF
+
+    def read_u32(self, endereco):
+        if endereco % 4 != 0:
+            raise ValueError(f"Endereco desalinhado: 0x{endereco:08X}")
+        return self.palavras.get(endereco, 0)
+
 
 
 class TestBranches(unittest.TestCase):
 
-    def executar_programa_teste(self, instrucoes, valores, pc_inicial=0x1000):
-        memoria = {}
+    
+    def executar_programa_teste(
+        self, instrucoes, valores, pc_inicial=0x1000, memoria=None
+    ):
+        if memoria is None:
+            memoria = RAM()
+
         registradores = [0] * 32
 
         for indice, valor in valores.items():
             registradores[indice] = valor & 0xFFFFFFFF
 
         for endereco, instrucao in instrucoes.items():
-            write_u32(memoria, endereco, instrucao)
+            memoria.write_u32(endereco, instrucao)
 
         executar_programa(
             memoria,
@@ -585,6 +606,8 @@ class TestBranches(unittest.TestCase):
         registradores = self.executar_programa_teste(
             instrucoes,
             {10: 0},
+            pc_inicial=0x1000,
+            memoria=MemoriaEsparsa(),
         )
 
         self.assertEqual(registradores[10], 1)
@@ -604,6 +627,7 @@ class TestBranches(unittest.TestCase):
             instrucoes,
             {10: 0},
             pc_inicial=0x0FFFFFFC,
+            memoria=MemoriaEsparsa(),
         )
 
         self.assertEqual(registradores[10], 1)
@@ -623,6 +647,7 @@ class TestBranches(unittest.TestCase):
             instrucoes,
             {10: 0},
             pc_inicial=0x0FFFFFFC,
+            memoria=MemoriaEsparsa(),
         )
 
         self.assertEqual(registradores[10], 1)
@@ -1049,6 +1074,7 @@ class TestBranches(unittest.TestCase):
             instrucoes,
             {},
             pc_inicial=0x0FFFFFFC,
+            memoria=MemoriaEsparsa(),
         )
 
         self.assertEqual(registradores[31], 0x10000004)
@@ -1066,6 +1092,7 @@ class TestBranches(unittest.TestCase):
             instrucoes,
             {},
             pc_inicial=0x0FFFFFFC,
+            memoria=MemoriaEsparsa(),
         )
 
         self.assertEqual(registradores[31], 0)

@@ -90,7 +90,8 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
         pc_atual = pc
 
         # Fetch
-        instrucao = read_u32(memoria, pc_atual)
+        # Fetch
+        instrucao = memoria.read_u32(pc_atual)
 
         # Guarda o estado do branch anterior.
         no_delay_slot = delay_slot_ativo
@@ -289,7 +290,7 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
                     f"LW em endereco desalinhado: 0x{endereco:08X}"
                 )
 
-            resultado = read_u32(memoria, endereco)
+            resultado = memoria.read_u32(endereco)
 
             if rt != 0:
                 registradores[rt] = resultado
@@ -304,8 +305,7 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
                     f"SW em endereco desalinhado: 0x{endereco:08X}"
                 )
 
-            write_u32(
-                memoria,
+            memoria.write_u32(
                 endereco,
                 registradores[rt]
             )
