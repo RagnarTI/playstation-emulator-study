@@ -2,33 +2,8 @@
 MASCARA_32 = 0xFFFFFFFF
 
 # ----------------------------------------
-# 1. Memória endereçada por byte
+# 1. Codificação das instruções
 # ----------------------------------------
-
-def read_u32(memoria, endereco):
-    """Lê uma palavra de 32 bits em little-endian."""
-    valor = 0
-
-    for i in range(4):
-        byte = memoria.get(endereco + i, 0)
-        valor |= (byte & 0xFF) << (8 * i)
-
-    return valor
-
-
-def write_u32(memoria, endereco, valor):
-    """Escreve uma palavra de 32 bits em little-endian."""
-    valor &= MASCARA_32
-
-    for i in range(4):
-        byte = (valor >> (8 * i)) & 0xFF
-        memoria[endereco + i] = byte
-
-
-# ----------------------------------------
-# 2. Codificação das instruções
-# ----------------------------------------
-
 def encode_r(rs, rt, rd, funct, shamt=0):
     return (
         (rs << 21)
@@ -38,7 +13,6 @@ def encode_r(rs, rt, rd, funct, shamt=0):
         | funct
     )
 
-
 def encode_i(opcode, rs, rt, immediate):
     return (
         (opcode << 26)
@@ -47,11 +21,9 @@ def encode_i(opcode, rs, rt, immediate):
         | (immediate & 0xFFFF)
     )
 
-
 # ----------------------------------------
-# 3. Conversão de valores com sinal
+# 2. Conversão de valores com sinal
 # ----------------------------------------
-
 def signed_32(valor):
     valor &= MASCARA_32
 
@@ -59,7 +31,6 @@ def signed_32(valor):
         valor -= 0x100000000
 
     return valor
-
 
 def signed_16(valor):
     valor &= 0xFFFF
@@ -69,9 +40,8 @@ def signed_16(valor):
 
     return valor
 
-
 # ----------------------------------------
-# 4. Interpretador
+# 3. Interpretador
 # ----------------------------------------
 class EnderecoDesalinhadoError(Exception):
     """Erro ao acessar uma palavra em endereço desalinhado."""
