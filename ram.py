@@ -9,15 +9,6 @@ class RAM:
                 f"Endereco desalinhado: 0x{endereco:08X}"
             )
 
-    def _validar_endereco(self, endereco, tamanho):
-        if endereco < 0 or endereco + tamanho > self.tamanho:
-            raise ValueError(
-                f"Endereço fora dos limites da RAM: "
-                f"endereco=0x{endereco:08X}, "
-                f"tamanho={tamanho}, "
-                f"limite=0x{self.tamanho:08X}"
-            )
-
     def read_u8(self, endereco):
         self._validar_endereco(endereco, 1)
         return self.dados[endereco]

@@ -14,6 +14,7 @@ from mips_interpreter import (
     encode_i,
     executar_programa,
     EnderecoDesalinhadoError,
+    EstadoEspecial,
 )
 from ram import RAM
 
@@ -577,6 +578,667 @@ class TestArithmetic(unittest.TestCase):
         ]
 
         self.assertEqual(memoria_depois, memoria_antes)
+    
+    def test_lb_com_valor_positivo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u8(0x2000, 0x7F)
+        registradores[1] = 0x2000
+
+        # LB rt, immediate(rs): opcode 0x20
+        instrucao = (0x20 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x7F)
+
+    def test_lb_com_valor_negativo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u8(0x2000, 0x80)
+        registradores[1] = 0x2000
+
+        instrucao = (0x20 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xFFFFFF80)
+
+    def test_lbu_nao_faz_extensao_de_sinal(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u8(0x2000, 0xFF)
+        registradores[1] = 0x2000
+
+        # LBU rt, immediate(rs): opcode 0x24
+        instrucao = (0x24 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xFF)
+
+    def test_lb_nao_altera_registrador_zero(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u8(0x2000, 0x80)
+        registradores[1] = 0x2000
+
+        # LB $zero, 0($1)
+        instrucao = (0x20 << 26) | (1 << 21)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[0], 0)
+
+        
+    def test_lh_com_valor_positivo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u16(0x2000, 0x7FFF)
+        registradores[1] = 0x2000
+
+        # LH rt, immediate(rs): opcode 0x21
+        instrucao = (0x21 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x7FFF)
+
+    def test_lh_com_valor_negativo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u16(0x2000, 0x8000)
+        registradores[1] = 0x2000
+
+        instrucao = (0x21 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xFFFF8000)
+
+    def test_lhu_nao_faz_extensao_de_sinal(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u16(0x2000, 0xFFFF)
+        registradores[1] = 0x2000
+
+        # LHU rt, immediate(rs): opcode 0x25
+        instrucao = (0x25 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xFFFF)
+
+    def test_lh_nao_altera_registrador_zero(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u16(0x2000, 0x8000)
+        registradores[1] = 0x2000
+
+        # LH $zero, 0($1)
+        instrucao = (0x21 << 26) | (1 << 21)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[0], 0)
+
+    def test_sb_armazena_apenas_um_byte(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u32(0x2000, 0x12345678)
+        registradores[1] = 0x2000
+        registradores[2] = 0xABCDEF90
+
+        # SB rt, immediate(rs): opcode 0x28
+        instrucao = (0x28 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(memoria.read_u8(0x2000), 0x90)
+        self.assertEqual(memoria.read_u8(0x2001), 0x56)
+        self.assertEqual(memoria.read_u8(0x2002), 0x34)
+        self.assertEqual(memoria.read_u8(0x2003), 0x12)
+
+    def test_sh_armazena_apenas_dois_bytes(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        memoria.write_u32(0x2000, 0x12345678)
+        registradores[1] = 0x2000
+        registradores[2] = 0xABCDEF90
+
+        # SH rt, immediate(rs): opcode 0x29
+        instrucao = (0x29 << 26) | (1 << 21) | (2 << 16)
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(memoria.read_u8(0x2000), 0x90)
+        self.assertEqual(memoria.read_u8(0x2001), 0xEF)
+        self.assertEqual(memoria.read_u8(0x2002), 0x34)
+        self.assertEqual(memoria.read_u8(0x2003), 0x12)
+
+    def test_sb_com_deslocamento(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        registradores[1] = 0x2000
+        registradores[2] = 0xAB
+        memoria.write_u8(0x2004, 0x11)
+
+        # SB $2, 4($1)
+        instrucao = (
+            (0x28 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 4
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(memoria.read_u8(0x2004), 0xAB)
+
+    def test_sh_com_deslocamento(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        registradores[1] = 0x2000
+        registradores[2] = 0xBEEF
+        memoria.write_u16(0x2004, 0x1234)
+
+        # SH $2, 4($1)
+        instrucao = (
+            (0x29 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 4
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(memoria.read_u16(0x2004), 0xBEEF)
+
+    def test_sh_com_endereco_desalinhado(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        registradores[1] = 0x2001
+        registradores[2] = 0xBEEF
+
+        # SH $2, 0($1)
+        instrucao = (
+            (0x29 << 26)
+            | (1 << 21)
+            | (2 << 16)
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            executar_programa(
+                memoria,
+                {0x1000},
+                0x1000,
+                registradores,
+                limite=1,
+            )
+        
+    def test_hi_lo_iniciam_em_zero(self):
+        estado = EstadoEspecial()
+
+        self.assertEqual(estado.hi, 0)
+        self.assertEqual(estado.lo, 0)
+
+
+    def test_hi_lo_armazenam_valores(self):
+        estado = EstadoEspecial()
+
+        estado.hi = 0x12345678
+        estado.lo = 0xABCDEF90
+
+        self.assertEqual(estado.hi, 0x12345678)
+        self.assertEqual(estado.lo, 0xABCDEF90)
+   
+    def test_executar_programa_preserva_estado_especial(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        estado.hi = 0x12345678
+        estado.lo = 0xABCDEF90
+
+        instrucao = encode_r(
+            rs=0,
+            rt=0,
+            rd=1,
+            funct=0x20,  # ADD $1, $0, $0
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.hi, 0x12345678)
+        self.assertEqual(estado.lo, 0xABCDEF90)
+        self.assertEqual(registradores[1], 0)
+
+    def test_mult_atualiza_hi_lo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 10
+        registradores[2] = 20
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x18,  # MULT $1, $2
+        )
+
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 200)
+        self.assertEqual(estado.hi, 0)
+        self.assertEqual(registradores[1], 10)
+        self.assertEqual(registradores[2], 20)
+        
+    def test_mult_com_resultado_negativo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0xFFFFFFFE  # -2
+        registradores[2] = 3
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x18,
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0xFFFFFFFA)
+        self.assertEqual(estado.hi, 0xFFFFFFFF)
+
+    def test_mult_usa_hi_quando_resultado_excede_32_bits(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0x7FFFFFFF
+        registradores[2] = 2
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x18,
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0xFFFFFFFE)
+        self.assertEqual(estado.hi, 0x00000000)
+        
+    def test_multu_interpreta_operandos_sem_sinal(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0xFFFFFFFF
+        registradores[2] = 2
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x19,  # MULTU
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0xFFFFFFFE)
+        self.assertEqual(estado.hi, 0x00000001)
+
+    def test_div_quociente_e_resto(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 17
+        registradores[2] = 5
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1A,  # DIV
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 3)
+        self.assertEqual(estado.hi, 2)
+
+    def test_div_com_operando_negativo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0xFFFFFFF9  # -7
+        registradores[2] = 3
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1A,  # DIV
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0xFFFFFFFE)  # -2
+        self.assertEqual(estado.hi, 0xFFFFFFFF)  # -1
+
+    def test_div_por_zero_com_dividendo_positivo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 17
+        registradores[2] = 0
+
+        # Valores sentinela para garantir que DIV os atualize.
+        estado.hi = 0x12345678
+        estado.lo = 0xABCDEF01
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1A,  # DIV
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.hi, 17)
+        self.assertEqual(estado.lo, 0xFFFFFFFF)
+
+    def test_div_por_zero_com_dividendo_negativo(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0xFFFFFFF9  # -7
+        registradores[2] = 0
+
+        estado.hi = 0x12345678
+        estado.lo = 0xABCDEF01
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1A,  # DIV
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.hi, 0xFFFFFFF9)
+        self.assertEqual(estado.lo, 0x00000001)
+
+    def test_divu_quociente_e_resto(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 17
+        registradores[2] = 5
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1B,  # DIVU
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 3)
+        self.assertEqual(estado.hi, 2)
+
+    def test_divu_interpreta_operandos_sem_sinal(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 0xFFFFFFFF
+        registradores[2] = 2
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1B,  # DIVU
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0x7FFFFFFF)
+        self.assertEqual(estado.hi, 1)
+
+    def test_divu_por_zero(self):
+        memoria = RAM()
+        registradores = [0] * 32
+        estado = EstadoEspecial()
+
+        registradores[1] = 17
+        registradores[2] = 0
+
+        estado.hi = 0x12345678
+        estado.lo = 0xABCDEF01
+
+        instrucao = encode_r(
+            rs=1,
+            rt=2,
+            rd=0,
+            funct=0x1B,  # DIVU
+        )
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            0x1000,
+            registradores,
+            limite=1,
+            estado_especial=estado,
+        )
+
+        self.assertEqual(estado.lo, 0xFFFFFFFF)
+        self.assertEqual(estado.hi, 17)
 
 if __name__ == "__main__":
     unittest.main()

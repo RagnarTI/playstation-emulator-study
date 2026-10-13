@@ -45,9 +45,15 @@ def signed_16(valor):
 # ----------------------------------------
 class EnderecoDesalinhadoError(Exception):
     """Erro ao acessar uma palavra em endereço desalinhado."""
+
+class EstadoEspecial:
+    def __init__(self):
+        self.hi = 0
+        self.lo = 0
     
-def executar_programa(memoria, enderecos_programa, pc_inicial,
-                      registradores, limite=100):
+
+def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
+                    limite=100, estado_especial=None, ):
 
     pc = pc_inicial
     passos = 0
@@ -56,10 +62,12 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
     delay_slot_ativo = False
     destino_atrasado = None
 
+    if estado_especial is None:
+        estado_especial = EstadoEspecial()
+
     while pc in enderecos_programa and passos < limite:
         pc_atual = pc
 
-        # Fetch
         # Fetch
         instrucao = memoria.read_u32(pc_atual)
 
@@ -155,6 +163,65 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
                 resultado = 1 if a < b else 0
                 if rd != 0:
                     registradores[rd] = resultado
+
+            
+            elif funct == 0x18:  # MULT
+                resultado = signed_32(a) * signed_32(b)
+
+                resultado &= 0xFFFFFFFFFFFFFFFF
+
+                estado_especial.lo = resultado & MASCARA_32
+                estado_especial.hi = (
+                    resultado >> 32
+                ) & MASCARA_32
+    
+            elif funct == 0x19:  # MULTU
+                resultado = (a & MASCARA_32) * (b & MASCARA_32)
+
+                resultado &= 0xFFFFFFFFFFFFFFFF
+
+                estado_especial.lo = resultado & MASCARA_32
+                estado_especial.hi = (
+                    resultado >> 32
+                ) & MASCARA_32
+
+            elif funct == 0x1A:  # DIV
+                divisor = signed_32(b)
+                dividendo = signed_32(a)
+
+                if divisor == 0:
+                    estado_especial.hi = dividendo & MASCARA_32
+                    estado_especial.lo = (
+                        0xFFFFFFFF
+                        if dividendo >= 0
+                        else 0x00000001
+                    )
+                else:
+                    quociente = abs(dividendo) // abs(divisor)
+
+                    if (dividendo < 0) != (divisor < 0):
+                        quociente = -quociente
+
+                    resto = dividendo - quociente * divisor
+
+                    estado_especial.lo = quociente & MASCARA_32
+                    estado_especial.hi = resto & MASCARA_32
+
+            elif funct == 0x1B:  # DIVU
+                dividendo = a & MASCARA_32
+                divisor = b & MASCARA_32
+
+                if divisor == 0:
+                    estado_especial.lo = 0xFFFFFFFF
+                    estado_especial.hi = dividendo
+                else:
+                    estado_especial.lo = (
+                        dividendo // divisor
+                    ) & MASCARA_32
+
+                    estado_especial.hi = (
+                        dividendo % divisor
+                    ) & MASCARA_32
 
             else:
                 raise NotImplementedError(
@@ -278,6 +345,87 @@ def executar_programa(memoria, enderecos_programa, pc_inicial,
             memoria.write_u32(
                 endereco,
                 registradores[rt]
+            )
+
+        elif opcode == 0x20:  # LB
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            resultado = memoria.read_u8(endereco)
+
+            if resultado & 0x80:
+                resultado |= 0xFFFFFF00
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x24:  # LBU
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            resultado = memoria.read_u8(endereco)
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x21:  # LH
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            if endereco % 2 != 0:
+                raise EnderecoDesalinhadoError(
+                    f"LH em endereco desalinhado: 0x{endereco:08X}"
+                )
+
+            resultado = memoria.read_u16(endereco)
+
+            if resultado & 0x8000:
+                resultado |= 0xFFFF0000
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x25:  # LHU
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            if endereco % 2 != 0:
+                raise EnderecoDesalinhadoError(
+                    f"LHU em endereco desalinhado: 0x{endereco:08X}"
+                )
+
+            resultado = memoria.read_u16(endereco)
+
+            if rt != 0:
+                registradores[rt] = resultado
+
+        elif opcode == 0x28:  # SB
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            memoria.write_u8(
+                endereco,
+                registradores[rt],
+            )
+
+        elif opcode == 0x29:  # SH
+            endereco = (
+                registradores[rs] + immediate
+            ) & MASCARA_32
+
+            if endereco % 2 != 0:
+                raise EnderecoDesalinhadoError(
+                    f"SH em endereco desalinhado: 0x{endereco:08X}"
+                )
+
+            memoria.write_u16(
+                endereco,
+                registradores[rt],
             )
 
         elif opcode == 0x04:        # BEQ
