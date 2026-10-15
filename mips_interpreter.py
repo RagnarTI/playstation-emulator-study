@@ -43,8 +43,7 @@ def signed_16(valor):
 # ----------------------------------------
 # 3. Interpretador
 # ----------------------------------------
-class EnderecoDesalinhadoError(Exception):
-    """Erro ao acessar uma palavra em endereço desalinhado."""
+from mips_exceptions import *
 
 class EstadoEspecial:
     def __init__(self):
@@ -53,7 +52,7 @@ class EstadoEspecial:
     
 
 def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
-                    limite=100, estado_especial=None, ):
+                    limite=100, estado_especial=None, retornar_pc=False ):
 
     pc = pc_inicial
     passos = 0
@@ -121,18 +120,50 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
                         "JR dentro de delay slot nao suportado."
                     )
 
-                destino_atrasado = a & MASCARA_32
+                destino_jr = a & MASCARA_32
+
+                if destino_jr % 4 != 0:
+                    raise EnderecoDesalinhadoError(
+                        "Destino de JR em endereco desalinhado."
+                    )
+
+                destino_atrasado = destino_jr
                 delay_slot_ativo = True
 
-            elif funct == 0x20:       # ADD
-                resultado = (a + b) & MASCARA_32
-                if rd != 0:
-                    registradores[rd] = resultado
+            elif funct == 0x09:  # JALR
+                if no_delay_slot:
+                    raise NotImplementedError(
+                        "JALR dentro de delay slot nao suportado."
+                    )
 
-            elif funct == 0x22:     # SUB
-                resultado = (a - b) & MASCARA_32
+                destino_jalr = a & MASCARA_32
+
+                if destino_jalr % 4 != 0:
+                    raise EnderecoDesalinhadoError(
+                        "Destino de JALR em endereco desalinhado."
+                    )
+
+                registradores[rd] = (pc_atual + 8) & MASCARA_32
+                destino_atrasado = destino_jalr
+                delay_slot_ativo = True
+
+            elif funct == 0x20:  # ADD
+                resultado = signed_32(a) + signed_32(b)
+
+                if not (-0x80000000 <= resultado <= 0x7FFFFFFF):
+                    raise IntegerOverflow("Overflow em ADD")
+
                 if rd != 0:
-                    registradores[rd] = resultado
+                    registradores[rd] = resultado & MASCARA_32
+
+            elif funct == 0x22:  # SUB
+                resultado = signed_32(a) - signed_32(b)
+
+                if not (-0x80000000 <= resultado <= 0x7FFFFFFF):
+                    raise IntegerOverflow("Overflow em SUB")
+
+                if rd != 0:
+                    registradores[rd] = resultado & MASCARA_32
 
             elif funct == 0x24:     # AND
                 resultado = a & b
@@ -260,12 +291,15 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
         # ADDI: soma com immediate e sinaliza overflow
         # ainda nao implementado nesta versao didatica.
 
-        elif opcode == 0x08:        # ADDI
+        elif opcode == 0x08:  # ADDI
             a = signed_32(registradores[rs])
-            resultado = (a + immediate) & MASCARA_32
+            resultado = a + immediate
+
+            if not (-0x80000000 <= resultado <= 0x7FFFFFFF):
+                raise IntegerOverflow("Overflow em ADDI")
 
             if rt != 0:
-                registradores[rt] = resultado
+                registradores[rt] = resultado & MASCARA_32
 
         elif opcode == 0x0A:  # SLTI
             a = signed_32(registradores[rs])
@@ -578,5 +612,8 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
     print("\n--- Fim da execucao ---")
     print(f"Instrucoes executadas: {passos}")
     print(f"PC final: 0x{pc:08X}")
+
+    if retornar_pc:
+        return registradores, pc
 
     return registradores

@@ -16,6 +16,7 @@ from mips_interpreter import (
     executar_programa,
 )
 from ram import RAM
+from memory_bus import MemoryBus
 
 
 class TestMemory(unittest.TestCase):
@@ -51,6 +52,8 @@ class TestMemory(unittest.TestCase):
         )
 
         self.assertEqual(memoria.read_u32(0x3000), 12345)
+        self.assertEqual(registradores[8], 12345)
+        self.assertEqual(registradores[9], 0x3000)
 
     def test_lw(self):
         memoria = RAM()
@@ -76,5 +79,95 @@ class TestMemory(unittest.TestCase):
         self.assertEqual(memoria.read_u8(0x2002), 0x34)
         self.assertEqual(memoria.read_u8(0x2003), 0x12)
 
+    def test_sw_atravessa_memory_bus(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x2B, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {8: 12345, 9: 0x3000},
+            memoria,
+        )
+
+        self.assertEqual(memoria.read_u32(0x3000), 12345)
+        self.assertEqual(ram.read_u32(0x3000), 12345)
+        self.assertEqual(registradores[8], 12345)
+        self.assertEqual(registradores[9], 0x3000)
+
+    def test_lw_atravessa_memory_bus(self):
+        ram = RAM()
+        ram.write_u32(0x3000, 9876)
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x23, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {9: 0x3000},
+            memoria,
+        )
+
+        self.assertEqual(registradores[8], 9876)
+
+    def test_sw_kseg0_atravessa_memory_bus(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x2B, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {8: 12345, 9: 0x80003000},
+            memoria,
+        )
+
+        self.assertEqual(ram.read_u32(0x3000), 12345)
+
+    def test_sw_kseg1_atravessa_memory_bus(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x2B, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {8: 12345, 9: 0xA0003000},
+            memoria,
+        )
+
+        self.assertEqual(ram.read_u32(0x3000), 12345)
+
+    def test_lw_kseg0_atravessa_memory_bus(self):
+        ram = RAM()
+        ram.write_u32(0x3000, 9876)
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x23, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {9: 0x80003000},
+            memoria,
+        )
+
+        self.assertEqual(registradores[8], 9876)
+
+    def test_lw_kseg1_atravessa_memory_bus(self):
+        ram = RAM()
+        ram.write_u32(0x3000, 9876)
+        memoria = MemoryBus(ram)
+
+        instrucao = encode_i(0x23, 9, 8, 0)
+
+        registradores, memoria = self.executar_instrucao(
+            instrucao,
+            {9: 0xA0003000},
+            memoria,
+        )
+
+        self.assertEqual(registradores[8], 9876)
+        
 if __name__ == "__main__":
     unittest.main()

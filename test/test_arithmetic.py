@@ -1240,5 +1240,261 @@ class TestArithmetic(unittest.TestCase):
         self.assertEqual(estado.lo, 0xFFFFFFFF)
         self.assertEqual(estado.hi, 17)
 
+    def test_delay_slot_j_executa_antes_do_salto(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+
+        # J para 0x1010
+        instrucao_j = 0x08000404
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,  # ADDIU
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_j)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        executar_programa(
+            memoria,
+            {endereco, endereco + 4},
+            endereco,
+            registradores,
+            limite=2,
+        )
+
+        self.assertEqual(registradores[8], 42)
+
+    def test_j_retorna_pc_final_no_destino(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+
+        # J para 0x1010
+        instrucao_j = 0x08000404
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_j)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        registradores, pc_final = executar_programa(
+            memoria,
+            {endereco, endereco + 4},
+            endereco,
+            registradores,
+            limite=2,
+            retornar_pc=True,
+        )
+
+        self.assertEqual(registradores[8], 42)
+        self.assertEqual(pc_final, 0x1010)
+
+    def test_jal_salva_retorno_e_executa_delay_slot(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+
+        # JAL para 0x1010
+        instrucao_jal = 0x0C000404
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_jal)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        registradores, pc_final = executar_programa(
+            memoria,
+            {endereco, endereco + 4},
+            endereco,
+            registradores,
+            limite=2,
+            retornar_pc=True,
+        )
+
+        self.assertEqual(registradores[31], 0x1008)
+        self.assertEqual(registradores[8], 42)
+        self.assertEqual(pc_final, 0x1010)
+
+    def test_jr_salva_destino_e_executa_delay_slot(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+        destino = 0x1020
+
+        registradores[5] = destino
+
+        # JR $5
+        instrucao_jr = encode_r(
+            rs=5,
+            rt=0,
+            rd=0,
+            funct=0x08,
+        )
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_jr)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        registradores, pc_final = executar_programa(
+            memoria,
+            {endereco, endereco + 4},
+            endereco,
+            registradores,
+            limite=2,
+            retornar_pc=True,
+        )
+
+        self.assertEqual(registradores[8], 42)
+        self.assertEqual(pc_final, destino)
+
+    def test_jalr_salva_retorno_e_executa_delay_slot(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+        destino = 0x1020
+
+        registradores[5] = destino
+
+        # JALR $10, $5
+        instrucao_jalr = encode_r(
+            rs=5,
+            rt=0,
+            rd=10,
+            funct=0x09,
+        )
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_jalr)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        registradores, pc_final = executar_programa(
+            memoria,
+            {endereco, endereco + 4},
+            endereco,
+            registradores,
+            limite=2,
+            retornar_pc=True,
+        )
+
+        self.assertEqual(registradores[10], 0x1008)
+        self.assertEqual(registradores[8], 42)
+        self.assertEqual(pc_final, destino)
+   
+    def test_jr_com_destino_desalinhado(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+        registradores[5] = 0x1021
+
+        # JR $5
+        instrucao_jr = encode_r(
+            rs=5,
+            rt=0,
+            rd=0,
+            funct=0x08,
+        )
+
+        # ADDIU $8, $0, 42 — delay slot
+        instrucao_delay = encode_i(
+            0x09,
+            0,
+            8,
+            42,
+        )
+
+        memoria.write_u32(endereco, instrucao_jr)
+        memoria.write_u32(endereco + 4, instrucao_delay)
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            executar_programa(
+                memoria,
+                {endereco, endereco + 4},
+                endereco,
+                registradores,
+                limite=2,
+                retornar_pc=True,
+            )
+
+    def test_jalr_com_destino_desalinhado(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco = 0x1000
+        registradores[5] = 0x1021
+
+        # JALR $10, $5
+        instrucao_jalr = encode_r(
+            rs=5,
+            rt=0,
+            rd=10,
+            funct=0x09,
+        )
+
+        memoria.write_u32(endereco, instrucao_jalr)
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            executar_programa(
+                memoria,
+                {endereco},
+                endereco,
+                registradores,
+                limite=2,
+                retornar_pc=True,
+            )
+
+    def test_add_com_overflow_com_sinal(self):
+        memoria = RAM(1024)
+
+        registradores = [0] * 32
+        registradores[8] = 0x7FFFFFFF
+        registradores[9] = 1
+
+        programa = [
+            encode_r(8, 9, 10, 0, 0x20),  # ADD $10, $8, $9
+        ]
+
+        for i, instrucao in enumerate(programa):
+            memoria.write_u32(i * 4, instrucao)
+
+        with self.assertRaises(Exception):
+            executar_programa(memoria, limite=1)
+
 if __name__ == "__main__":
     unittest.main()
