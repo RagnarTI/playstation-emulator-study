@@ -10,11 +10,29 @@ if PASTA_PROJETO not in sys.path:
     sys.path.insert(0, PASTA_PROJETO)
 
 from mips_interpreter import (
+    MASCARA_32,
     encode_r,
     encode_i,
     executar_programa,
+    decodificar_instrucao,
+    executar_operacao_logica,
+    executar_deslocamento,
+    executar_soma_subtracao,
+    executar_comparacao,
+    executar_multiplicacao,
+    executar_divisao,
+    executar_salto_registrador,
+    calcular_destino_salto,
+    calcular_destino_desvio,
+    executar_lui,
+    executar_addi,
+    executar_addiu,
+    calcular_endereco_efetivo,
+    executar_lwl_lwr,
+    executar_swl_swr,
     EnderecoDesalinhadoError,
     EstadoEspecial,
+    IntegerOverflow, 
 )
 from ram import RAM
 
@@ -1495,6 +1513,2608 @@ class TestArithmetic(unittest.TestCase):
 
         with self.assertRaises(Exception):
             executar_programa(memoria, limite=1)
+
+    def test_decodificar_instrucao_campos_basicos(self):
+        instrucao = (
+            (0x09 << 26)  # opcode: ADDIU
+            | (8 << 21)   # rs: $t0
+            | (9 << 16)   # rt: $t1
+            | 0xFFFF      # imediato: -1
+        )
+
+        campos = decodificar_instrucao(instrucao)
+
+        self.assertEqual(campos["opcode"], 0x09)
+        self.assertEqual(campos["rs"], 8)
+        self.assertEqual(campos["rt"], 9)
+        self.assertEqual(campos["rd"], 31)
+        self.assertEqual(campos["shamt"], 31)
+        self.assertEqual(campos["funct"], 0x3F)
+        self.assertEqual(campos["immediate"], -1)
+
+    def test_executar_operacao_logica(self):
+        a = 0b1100
+        b = 0b1010
+
+        self.assertEqual(executar_operacao_logica(0x24, a, b), 0b1000)
+        self.assertEqual(executar_operacao_logica(0x25, a, b), 0b1110)
+        self.assertEqual(executar_operacao_logica(0x26, a, b), 0b0110)
+        self.assertEqual(
+            executar_operacao_logica(0x27, a, b),
+            (~0b1110) & MASCARA_32,
+        )
+
+    def test_executar_deslocamento(self):
+        self.assertEqual(
+            executar_deslocamento(0x00, 3, 2),
+            12,
+        )
+
+        self.assertEqual(
+            executar_deslocamento(0x02, 12, 2),
+            3,
+        )
+
+        self.assertEqual(
+            executar_deslocamento(0x03, 0xFFFFFFF0, 2),
+            0xFFFFFFFC,
+        )
+
+    def test_executar_soma_subtracao(self):
+        self.assertEqual(
+            executar_soma_subtracao(0x20, 10, 20),
+            30,
+        )
+
+        self.assertEqual(
+            executar_soma_subtracao(0x22, 20, 10),
+            10,
+        )
+
+        with self.assertRaises(IntegerOverflow):
+            executar_soma_subtracao(0x20, 0x7FFFFFFF, 1)
+
+        with self.assertRaises(IntegerOverflow):
+            executar_soma_subtracao(0x22, 0x80000000, 1)
+
+    def test_executar_comparacao(self):
+        self.assertEqual(executar_comparacao(0x2A, 10, 20), 1)
+        self.assertEqual(executar_comparacao(0x2A, 20, 10), 0)
+
+        # 0xFFFFFFFF representa -1 com sinal, mas é maior que 1 sem sinal.
+        self.assertEqual(
+            executar_comparacao(0x2A, 0xFFFFFFFF, 1),
+            1,
+        )
+        self.assertEqual(
+            executar_comparacao(0x2B, 0xFFFFFFFF, 1),
+            0,
+        )
+
+    def test_executar_multiplicacao(self):
+        hi, lo = executar_multiplicacao(0x18, 10, 20)
+        self.assertEqual(hi, 0)
+        self.assertEqual(lo, 200)
+
+        hi, lo = executar_multiplicacao(0x19, 0xFFFFFFFF, 2)
+        self.assertEqual(hi, 1)
+        self.assertEqual(lo, 0xFFFFFFFE)
+
+        hi, lo = executar_multiplicacao(0x18, 0xFFFFFFFF, 2)
+        self.assertEqual(hi, 0xFFFFFFFF)
+        self.assertEqual(lo, 0xFFFFFFFE)
+
+    def test_executar_divisao(self):
+        hi, lo = executar_divisao(0x1A, 20, 6)
+        self.assertEqual(lo, 3)
+        self.assertEqual(hi, 2)
+
+        hi, lo = executar_divisao(0x1A, 0xFFFFFFF6, 3)
+        self.assertEqual(lo, 0xFFFFFFFD)
+        self.assertEqual(hi, 0xFFFFFFFF)
+
+        hi, lo = executar_divisao(0x1B, 20, 6)
+        self.assertEqual(lo, 3)
+        self.assertEqual(hi, 2)
+
+        hi, lo = executar_divisao(0x1A, 10, 0)
+        self.assertEqual(lo, 0xFFFFFFFF)
+        self.assertEqual(hi, 10)
+
+        hi, lo = executar_divisao(0x1B, 10, 0)
+        self.assertEqual(lo, 0xFFFFFFFF)
+        self.assertEqual(hi, 10)
+
+    def test_executar_salto_registrador(self):
+        destino, link = executar_salto_registrador(
+            0x08, 0x2000, 0x1000, False
+        )
+        self.assertEqual(destino, 0x2000)
+        self.assertIsNone(link)
+
+        destino, link = executar_salto_registrador(
+            0x09, 0x3000, 0x1000, False
+        )
+        self.assertEqual(destino, 0x3000)
+        self.assertEqual(link, 0x1008)
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            executar_salto_registrador(
+                0x08, 0x2002, 0x1000, False
+            )
+
+        with self.assertRaises(NotImplementedError):
+            executar_salto_registrador(
+                0x08, 0x2000, 0x1000, True
+
+        )
+    def test_calcular_destino_salto(self):
+        instrucao = (0x03 << 26) | 0x00000100
+
+        destino = calcular_destino_salto(
+            instrucao,
+            0x80000000,
+        )
+
+        self.assertEqual(destino, 0x80000400)
+
+    def test_calcular_destino_desvio(self):
+        # Desvio para frente
+        self.assertEqual(
+            calcular_destino_desvio(0x1000, 2),
+            0x100C,
+        )
+
+        # Desvio para trás
+        self.assertEqual(
+            calcular_destino_desvio(0x1000, -2),
+            0x0FFC,
+        )
+
+        # O endereço permanece limitado a 32 bits
+        self.assertEqual(
+            calcular_destino_desvio(0xFFFFFFFC, 0),
+            0x00000000,
+        )
+
+    def test_comparacao_imediata(self):
+        # SLTI: comparação com sinal
+        self.assertEqual(
+            executar_comparacao(0x2A, 0xFFFFFFFF, 1),
+            1,
+        )
+
+        # SLTIU: comparação sem sinal
+        self.assertEqual(
+            executar_comparacao(0x2B, 0xFFFFFFFF, 1),
+            0,
+        )
+
+    def test_operacoes_logicas_com_imediato(self):
+        imediato = 0x00FF
+        valor = 0x12345678
+
+        self.assertEqual(
+            executar_operacao_logica(0x24, valor, imediato),
+            0x00000078,
+        )
+        self.assertEqual(
+            executar_operacao_logica(0x25, valor, imediato),
+            0x123456FF,
+        )
+        self.assertEqual(
+            executar_operacao_logica(0x26, valor, imediato),
+            0x12345687,
+        )
+
+    def test_executar_lui(self):
+        instrucao = (0x0F << 26) | (0x12 << 16) | 0xABCD
+
+        self.assertEqual(
+            executar_lui(instrucao),
+            0xABCD0000,
+        )
+
+    def test_executar_addi(self):
+        self.assertEqual(executar_addi(10, 5), 15)
+        self.assertEqual(executar_addi(0xFFFFFFFF, 1), 0)
+
+        with self.assertRaises(IntegerOverflow):
+            executar_addi(0x7FFFFFFF, 1)
+
+        with self.assertRaises(IntegerOverflow):
+            executar_addi(0x80000000, -1)
+
+    def test_executar_addiu(self):
+        self.assertEqual(
+            executar_addiu(10, 5),
+            15,
+        )
+
+        self.assertEqual(
+            executar_addiu(10, -5),
+            5,
+        )
+
+        self.assertEqual(
+            executar_addiu(0xFFFFFFFF, 1),
+            0,
+        )
+
+    def test_calcular_endereco_efetivo(self):
+        self.assertEqual(
+            calcular_endereco_efetivo(0x1000, 4, "LW"),
+            0x1004,
+        )
+
+        self.assertEqual(
+            calcular_endereco_efetivo(0x1000, -4, "SW"),
+            0x0FFC,
+        )
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            calcular_endereco_efetivo(0x1000, 2, "LW")
+
+        with self.assertRaises(EnderecoDesalinhadoError):
+            calcular_endereco_efetivo(0x1000, 2, "SW")
+
+    def test_sltiu_imediato_negativo(self):
+        instrucao = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFE},
+        )
+
+        self.assertEqual(registradores[9], 1)
+
+    def test_addi_gera_overflow_na_execucao(self):
+        instrucao = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        with self.assertRaises(IntegerOverflow):
+            self.executar_instrucao(
+                instrucao,
+                {8: 0x7FFFFFFF},
+            )
+    
+    def test_addiu_nao_gera_overflow_na_execucao(self):
+        instrucao = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x7FFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0x80000000)
+    
+    def test_addi_addiu_preservam_registrador_zero(self):
+        instrucao_addi = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (0 << 16)
+            | 5
+        )
+
+        instrucao_addiu = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (0 << 16)
+            | 5
+        )
+
+        registradores_addi = self.executar_instrucao(
+            instrucao_addi,
+            {8: 10},
+        )
+
+        registradores_addiu = self.executar_instrucao(
+            instrucao_addiu,
+            {8: 10},
+        )
+
+        self.assertEqual(registradores_addi[0], 0)
+        self.assertEqual(registradores_addiu[0], 0)
+    
+    def test_slti_e_sltiu_diferenciam_comparacao_com_sinal(self):
+        instrucao_slti = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        instrucao_sltiu = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores_slti = self.executar_instrucao(
+            instrucao_slti,
+            {8: 0xFFFFFFFF},
+        )
+
+        registradores_sltiu = self.executar_instrucao(
+            instrucao_sltiu,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores_slti[9], 1)
+        self.assertEqual(registradores_sltiu[9], 0)
+
+    def test_slti_imediato_negativo(self):
+        instrucao = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_logicas_imediatas_nao_estendem_sinal(self):
+        instrucao_andi = (
+            (0x0C << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x8000
+        )
+
+        instrucao_ori = (
+            (0x0D << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x8000
+        )
+
+        instrucao_xori = (
+            (0x0E << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x8000
+        )
+
+        registradores_andi = self.executar_instrucao(
+            instrucao_andi,
+            {8: 0xFFFFFFFF},
+        )
+
+        registradores_ori = self.executar_instrucao(
+            instrucao_ori,
+            {8: 0},
+        )
+
+        registradores_xori = self.executar_instrucao(
+            instrucao_xori,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores_andi[9], 0x00008000)
+        self.assertEqual(registradores_ori[9], 0x00008000)
+        self.assertEqual(registradores_xori[9], 0xFFFF7FFF)
+    
+    def test_logicas_imediatas_preservam_registrador_zero(self):
+        instrucoes = [
+            (0x0C << 26) | (8 << 21) | 0xFFFF,  # ANDI
+            (0x0D << 26) | (8 << 21) | 0xFFFF,  # ORI
+            (0x0E << 26) | (8 << 21) | 0xFFFF,  # XORI
+        ]
+
+        for instrucao in instrucoes:
+            registradores = self.executar_instrucao(
+                instrucao,
+                {8: 0xFFFFFFFF},
+            )
+
+            self.assertEqual(registradores[0], 0)
+
+    def test_logicas_imediatas_alteram_apenas_rt(self):
+        instrucoes = [
+            (0x0C << 26) | (8 << 21) | (9 << 16) | 0x00FF,  # ANDI
+            (0x0D << 26) | (8 << 21) | (9 << 16) | 0x00FF,  # ORI
+            (0x0E << 26) | (8 << 21) | (9 << 16) | 0x00FF,  # XORI
+        ]
+
+        for instrucao in instrucoes:
+            registradores = self.executar_instrucao(
+                instrucao,
+                {8: 0x12345678, 9: 0xAAAAAAAA, 10: 0x55555555},
+            )
+
+            self.assertEqual(registradores[8], 0x12345678)
+            self.assertEqual(registradores[10], 0x55555555)
+
+    def test_lui_na_execucao_integrada(self):
+        instrucao = (0x0F << 26) | (9 << 16) | 0xABCD
+
+        registradores = self.executar_instrucao(instrucao, {})
+
+        self.assertEqual(registradores[9], 0xABCD0000)
+
+    def test_lui_preserva_registrador_zero(self):
+        instrucao = (0x0F << 26) | (0 << 16) | 0xABCD
+
+        registradores = self.executar_instrucao(instrucao, {})
+
+        self.assertEqual(registradores[0], 0)
+
+    def test_lui_altera_apenas_registrador_destino(self):
+        instrucao = (0x0F << 26) | (9 << 16) | 0xABCD
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678, 10: 0x55555555},
+        )
+
+        self.assertEqual(registradores[9], 0xABCD0000)
+        self.assertEqual(registradores[8], 0x12345678)
+        self.assertEqual(registradores[10], 0x55555555)
+
+    def test_addiu_imediato_negativo_na_execucao(self):
+        instrucao = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 10},
+        )
+
+        self.assertEqual(registradores[9], 9)
+
+    def test_addiu_limita_resultado_a_32_bits(self):
+        instrucao = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_addiu_produz_resultado_negativo(self):
+        instrucao = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0},
+        )
+
+        self.assertEqual(registradores[9], 0xFFFFFFFF)
+
+    def test_addi_imediato_negativo_na_execucao(self):
+        instrucao = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 10},
+        )
+
+        self.assertEqual(registradores[9], 9)
+
+    def test_addi_gera_overflow_negativo_na_execucao(self):
+        instrucao = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        with self.assertRaises(IntegerOverflow):
+            self.executar_instrucao(
+                instrucao,
+                {8: 0x80000000},
+            )
+
+    def test_addi_atinge_limite_inferior_sem_overflow(self):
+        instrucao = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x80000001},
+        )
+
+        self.assertEqual(registradores[9], 0x80000000)
+
+    def test_addiu_ultrapassa_limite_inferior_sem_excecao(self):
+        instrucao = (
+            (0x09 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x80000000},
+        )
+
+        self.assertEqual(registradores[9], 0x7FFFFFFF)
+
+    def test_slti_com_imediato_negativo_na_execucao(self):
+        instrucao = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_slti_e_sltiu_com_registrador_negativo(self):
+        instrucao_slti = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        instrucao_sltiu = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores_slti = self.executar_instrucao(
+            instrucao_slti,
+            {8: 0xFFFFFFFF},
+        )
+
+        registradores_sltiu = self.executar_instrucao(
+            instrucao_sltiu,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores_slti[9], 1)
+        self.assertEqual(registradores_sltiu[9], 0)
+
+    def test_sltiu_imediato_negativo_com_valor_zero(self):
+        instrucao = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0},
+        )
+
+        self.assertEqual(registradores[9], 1)
+
+    def test_sltiu_com_operandos_iguais(self):
+        instrucao = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_slti_com_menor_inteiro_com_sinal(self):
+        instrucao = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x80000000},
+        )
+
+        self.assertEqual(registradores[9], 1)
+
+    def test_slti_com_maior_inteiro_positivo(self):
+        instrucao = (
+            (0x0A << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x7FFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_sltiu_com_maior_inteiro_positivo(self):
+        instrucao = (
+            (0x0B << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 1
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x7FFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_andi_com_imediato_zero(self):
+        instrucao = (
+            (0x0C << 26)
+            | (8 << 21)
+            | (9 << 16)
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0)
+
+    def test_ori_com_imediato_zero(self):
+        instrucao = (
+            (0x0D << 26)
+            | (8 << 21)
+            | (9 << 16)
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x12345678)
+
+    def test_xori_com_imediato_zero(self):
+        instrucao = (
+            (0x0E << 26)
+            | (8 << 21)
+            | (9 << 16)
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x12345678)
+
+    def test_andi_com_imediato_todos_os_bits_ativos(self):
+        instrucao = (
+            (0x0C << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x00005678)
+
+    def test_ori_com_imediato_todos_os_bits_ativos(self):
+        instrucao = (
+            (0x0D << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12340000},
+        )
+
+        self.assertEqual(registradores[9], 0x1234FFFF)
+
+    def test_xori_com_imediato_todos_os_bits_ativos(self):
+        instrucao = (
+            (0x0E << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x1234A987)
+
+    def test_andi_com_mascara_seletiva(self):
+        instrucao = (
+            (0x0C << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x0F0F
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x00000608)
+
+    def test_ori_com_mascara_seletiva(self):
+        instrucao = (
+            (0x0D << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x0F0F
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12340000},
+        )
+
+        self.assertEqual(registradores[9], 0x12340F0F)
+
+    def test_xori_com_mascara_seletiva(self):
+        instrucao = (
+            (0x0E << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | 0x0F0F
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0x12345977)
+
+    def test_lui_com_imediato_zero(self):
+        instrucao = (
+            (0x0F << 26)
+            | (9 << 16)
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0x12345678},
+        )
+
+        self.assertEqual(registradores[9], 0)
+        self.assertEqual(registradores[8], 0x12345678)
+
+    def test_lui_com_imediato_maximo(self):
+        instrucao = (
+            (0x0F << 26)
+            | (9 << 16)
+            | 0xFFFF
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {},
+        )
+
+        self.assertEqual(registradores[9], 0xFFFF0000)
+
+    def test_addi_com_imediato_zero(self):
+        instrucao = (
+            (0x08 << 26)
+            | (8 << 21)
+            | (9 << 16)
+        )
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {8: 0xFFFFFFFF},
+        )
+
+        self.assertEqual(registradores[9], 0xFFFFFFFF)
+
+    def test_calcular_endereco_efetivo_com_alinhamento_de_byte(self):
+        endereco = calcular_endereco_efetivo(
+            0x1000, 1, "LB", alinhamento=1
+        )
+        self.assertEqual(endereco, 0x1001)
+
+
+    def test_calcular_endereco_efetivo_com_alinhamento_de_meia_palavra(self):
+        endereco = calcular_endereco_efetivo(
+            0x1000, 2, "LH", alinhamento=2
+        )
+        self.assertEqual(endereco, 0x1002)
+
+
+    def test_calcular_endereco_efetivo_rejeita_meia_palavra_desalinhada(self):
+        with self.assertRaises(EnderecoDesalinhadoError):
+            calcular_endereco_efetivo(
+                0x1000, 1, "LH", alinhamento=2
+            )
+
+    def test_calcular_endereco_efetivo_com_wraparound(self):
+        endereco = calcular_endereco_efetivo(
+            0xFFFFFFFF,
+            1,
+            "LB",
+            alinhamento=1,
+        )
+
+        self.assertEqual(endereco, 0x00000000)
+
+    def test_calcular_endereco_efetivo_com_wraparound_alinhado(self):
+        endereco = calcular_endereco_efetivo(
+            0xFFFFFFFF,
+            1,
+            "LH",
+            alinhamento=2,
+        )
+
+        self.assertEqual(endereco, 0x00000000)
+
+    def test_mfhi_copia_hi_para_rd(self):
+        memoria = RAM()
+        pc = 0x1000
+        rd = 8
+        instrucao = (rd << 11) | 0x10  # MFHI
+
+        memoria.write_u32(pc, instrucao)
+        registradores = [0] * 32
+        estado_especial = EstadoEspecial()
+        estado_especial.hi = 0x12345678
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(registradores[rd], 0x12345678)
+
+
+    def test_mflo_copia_lo_para_rd(self):
+        memoria = RAM()
+        pc = 0x1000
+        rd = 8
+        instrucao = (rd << 11) | 0x12  # MFLO
+
+        memoria.write_u32(pc, instrucao)
+        registradores = [0] * 32
+        estado_especial = EstadoEspecial()
+        estado_especial.lo = 0x87654321
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(registradores[rd], 0x87654321)
+
+    def test_mfhi_preserva_zero(self):
+        memoria = RAM()
+        pc = 0x1000
+        instrucao = 0x10  # MFHI com rd = 0
+
+        memoria.write_u32(pc, instrucao)
+        registradores = [0] * 32
+        estado_especial = EstadoEspecial()
+        estado_especial.hi = 0x12345678
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(registradores[0], 0)
+
+
+    def test_mflo_preserva_zero(self):
+        memoria = RAM()
+        pc = 0x1000
+        instrucao = 0x12  # MFLO com rd = 0
+
+        memoria.write_u32(pc, instrucao)
+        registradores = [0] * 32
+        estado_especial = EstadoEspecial()
+        estado_especial.lo = 0x87654321
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(registradores[0], 0)
+
+    def test_mult_seguido_de_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd = 10
+
+        # MULT $t0, $t1
+        instrucao_mult = (rs << 21) | (rt << 16) | 0x18
+
+        # MFHI $t2
+        instrucao_mfhi = (rd << 11) | 0x10
+
+        memoria.write_u32(pc, instrucao_mult)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+
+        registradores = [0] * 32
+        registradores[rs] = 0x7FFFFFFF
+        registradores[rt] = 2
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4},
+            pc,
+            registradores,
+            limite=2,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFE)
+        self.assertEqual(registradores[rd], 0)
+
+    def test_mult_seguido_de_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd = 10
+
+        # MULT $t0, $t1
+        instrucao_mult = (rs << 21) | (rt << 16) | 0x18
+
+        # MFLO $t2
+        instrucao_mflo = (rd << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_mult)
+        memoria.write_u32(pc + 4, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = 0x7FFFFFFF
+        registradores[rt] = 2
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4},
+            pc,
+            registradores,
+            limite=2,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFE)
+        self.assertEqual(registradores[rd], 0xFFFFFFFE)
+
+    def test_div_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_div)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 5
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 2)
+        self.assertEqual(estado_especial.lo, 3)
+        self.assertEqual(registradores[rd_hi], 2)
+        self.assertEqual(registradores[rd_lo], 3)
+
+    def test_div_negativo_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_div)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = (-17) & 0xFFFFFFFF
+        registradores[rt] = 5
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0xFFFFFFFE)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFD)
+        self.assertEqual(registradores[rd_hi], 0xFFFFFFFE)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFD)
+
+    def test_div_divisor_negativo_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_div)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = (-5) & 0xFFFFFFFF
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 2)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFD)
+        self.assertEqual(registradores[rd_hi], 2)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFD)
+
+    def test_div_ambos_operandos_negativos_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_div)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = (-17) & 0xFFFFFFFF
+        registradores[rt] = (-5) & 0xFFFFFFFF
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0xFFFFFFFE)
+        self.assertEqual(estado_especial.lo, 3)
+        self.assertEqual(registradores[rd_hi], 0xFFFFFFFE)
+        self.assertEqual(registradores[rd_lo], 3)
+
+    def test_div_por_zero_com_dividendo_positivo(self):
+        hi, lo = executar_divisao(0x1A, 17, 0)
+
+        self.assertEqual(hi, 17)
+        self.assertEqual(lo, 0xFFFFFFFF)
+
+    def test_div_por_zero_com_dividendo_negativo(self):
+        dividendo = (-17) & 0xFFFFFFFF
+
+        hi, lo = executar_divisao(0x1A, dividendo, 0)
+
+        self.assertEqual(hi, 0xFFFFFFEF)
+        self.assertEqual(lo, 0x00000001)
+
+    def test_divu_por_zero(self):
+        hi, lo = executar_divisao(0x1B, 17, 0)
+
+        self.assertEqual(hi, 17)
+        self.assertEqual(lo, 0xFFFFFFFF)
+
+    def test_div_por_zero_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_div)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 0
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 17)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_hi], 17)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFF)
+
+    def test_divu_por_zero_seguido_de_mfhi_e_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # DIVU $t0, $t1
+        instrucao_divu = (rs << 21) | (rt << 16) | 0x1B
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        memoria.write_u32(pc, instrucao_divu)
+        memoria.write_u32(pc + 4, instrucao_mfhi)
+        memoria.write_u32(pc + 8, instrucao_mflo)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 0
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 17)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_hi], 17)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFF)
+
+    def test_div_menor_inteiro_por_menos_um(self):
+        dividendo = 0x80000000
+        divisor = 0xFFFFFFFF
+
+        hi, lo = executar_divisao(0x1A, dividendo, divisor)
+
+        self.assertEqual(hi, 0)
+        self.assertEqual(lo, 0x80000000)
+
+    def test_divu_maior_inteiro_por_dois(self):
+        dividendo = 0xFFFFFFFF
+        divisor = 2
+
+        hi, lo = executar_divisao(0x1B, dividendo, divisor)
+
+        self.assertEqual(hi, 1)
+        self.assertEqual(lo, 0x7FFFFFFF)
+
+    def test_mthi_copia_rs_para_hi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+
+        # MTHI $t0
+        instrucao = (rs << 21) | 0x11
+
+        memoria.write_u32(pc, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0x12345678
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0x12345678)
+
+    def test_mtlo_copia_rs_para_lo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+
+        # MTLO $t0
+        instrucao = (rs << 21) | 0x13
+
+        memoria.write_u32(pc, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0x87654321
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc},
+            pc,
+            registradores,
+            limite=1,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0x87654321)
+
+    def test_mthi_mtlo_seguidos_de_mfhi_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs_hi = 8
+        rs_lo = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # MTHI $t0
+        instrucao_mthi = (rs_hi << 21) | 0x11
+
+        # MTLO $t1
+        instrucao_mtlo = (rs_lo << 21) | 0x13
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        instrucoes = [
+            instrucao_mthi,
+            instrucao_mtlo,
+            instrucao_mfhi,
+            instrucao_mflo,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs_hi] = 0x12345678
+        registradores[rs_lo] = 0x87654321
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8, pc + 12},
+            pc,
+            registradores,
+            limite=4,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0x12345678)
+        self.assertEqual(estado_especial.lo, 0x87654321)
+        self.assertEqual(registradores[rd_hi], 0x12345678)
+        self.assertEqual(registradores[rd_lo], 0x87654321)
+
+    def test_mult_seguido_de_mfhi_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8   # $t0
+        rt = 9   # $t1
+        rd_hi = 10  # $t2
+        rd_lo = 11  # $t3
+
+        # MULT $t0, $t1
+        instrucao_mult = (rs << 21) | (rt << 16) | 0x18
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        instrucoes = [
+            instrucao_mult,
+            instrucao_mfhi,
+            instrucao_mflo,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0xFFFFFFFF  # -1 em 32 bits
+        registradores[rt] = 2
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 0xFFFFFFFF)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFE)
+        self.assertEqual(registradores[rd_hi], 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFE)
+
+    def test_multu_seguido_de_mfhi_mflo(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_hi = 10
+        rd_lo = 11
+
+        # MULTU $t0, $t1
+        instrucao_multu = (rs << 21) | (rt << 16) | 0x19
+
+        # MFHI $t2
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        # MFLO $t3
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        instrucoes = [
+            instrucao_multu,
+            instrucao_mfhi,
+            instrucao_mflo,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0xFFFFFFFF
+        registradores[rt] = 2
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.hi, 1)
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFE)
+        self.assertEqual(registradores[rd_hi], 1)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFE)
+
+    def test_div_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_div,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 5
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 3)
+        self.assertEqual(estado_especial.hi, 2)
+        self.assertEqual(registradores[rd_lo], 3)
+        self.assertEqual(registradores[rd_hi], 2)
+
+    def test_div_negativo_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_div,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = (-17) & 0xFFFFFFFF
+        registradores[rt] = 5
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFD)  # -3
+        self.assertEqual(estado_especial.hi, 0xFFFFFFFE)  # -2
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFD)
+        self.assertEqual(registradores[rd_hi], 0xFFFFFFFE)
+
+    def test_divu_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIVU $t0, $t1
+        instrucao_divu = (rs << 21) | (rt << 16) | 0x1B
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_divu,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0xFFFFFFFF
+        registradores[rt] = 2
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0x7FFFFFFF)
+        self.assertEqual(estado_especial.hi, 1)
+        self.assertEqual(registradores[rd_lo], 0x7FFFFFFF)
+        self.assertEqual(registradores[rd_hi], 1)
+
+    def test_div_por_zero_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_div,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 0
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFF)
+        self.assertEqual(estado_especial.hi, 17)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_hi], 17)
+
+    def test_div_negativo_por_zero_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIV $t0, $t1
+        instrucao_div = (rs << 21) | (rt << 16) | 0x1A
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_div,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 0xFFFFFFFF  # -1 em 32 bits
+        registradores[rt] = 0
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0x00000001)
+        self.assertEqual(estado_especial.hi, 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_lo], 0x00000001)
+        self.assertEqual(registradores[rd_hi], 0xFFFFFFFF)
+
+    def test_divu_por_zero_seguido_de_mflo_mfhi(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        rs = 8
+        rt = 9
+        rd_lo = 10
+        rd_hi = 11
+
+        # DIVU $t0, $t1
+        instrucao_divu = (rs << 21) | (rt << 16) | 0x1B
+
+        # MFLO $t2
+        instrucao_mflo = (rd_lo << 11) | 0x12
+
+        # MFHI $t3
+        instrucao_mfhi = (rd_hi << 11) | 0x10
+
+        instrucoes = [
+            instrucao_divu,
+            instrucao_mflo,
+            instrucao_mfhi,
+        ]
+
+        for indice, instrucao in enumerate(instrucoes):
+            memoria.write_u32(pc + indice * 4, instrucao)
+
+        registradores = [0] * 32
+        registradores[rs] = 17
+        registradores[rt] = 0
+
+        estado_especial = EstadoEspecial()
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8},
+            pc,
+            registradores,
+            limite=3,
+            estado_especial=estado_especial,
+        )
+
+        self.assertEqual(estado_especial.lo, 0xFFFFFFFF)
+        self.assertEqual(estado_especial.hi, 17)
+        self.assertEqual(registradores[rd_lo], 0xFFFFFFFF)
+        self.assertEqual(registradores[rd_hi], 17)
+
+    def test_j_executa_instrucao_no_delay_slot(self):
+        memoria = RAM()
+        pc = 0x1000
+        destino = 0x1020
+
+        # J destino
+        instrucao_j = 0x08000000 | ((destino >> 2) & 0x03FFFFFF)
+
+        # ADDIU $t0, $zero, 42 — delay slot
+        instrucao_delay = (0x09 << 26) | (8 << 16) | 42
+
+        # ADDIU $t1, $zero, 99 — destino do salto
+        instrucao_destino = (0x09 << 26) | (9 << 16) | 99
+
+        memoria.write_u32(pc, instrucao_j)
+        memoria.write_u32(pc + 4, instrucao_delay)
+        memoria.write_u32(destino, instrucao_destino)
+
+        registradores = [0] * 32
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, destino},
+            pc,
+            registradores,
+            limite=3,
+        )
+
+        self.assertEqual(registradores[8], 42)
+        self.assertEqual(registradores[9], 99)
+
+    def test_beq_executa_instrucao_no_delay_slot(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        # BEQ $t0, $t1, destino
+        # O destino fica em pc + 4 + (offset << 2).
+        offset = 3
+        instrucao_beq = (
+            (0x04 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | offset
+        )
+
+        # ADDIU $t2, $zero, 42 — delay slot
+        instrucao_delay = (0x09 << 26) | (10 << 16) | 42
+
+        # ADDIU $t3, $zero, 99 — destino do desvio
+        instrucao_destino = (0x09 << 26) | (11 << 16) | 99
+
+        destino = pc + 4 + (offset << 2)
+
+        memoria.write_u32(pc, instrucao_beq)
+        memoria.write_u32(pc + 4, instrucao_delay)
+        memoria.write_u32(destino, instrucao_destino)
+
+        registradores = [0] * 32
+        registradores[8] = 7
+        registradores[9] = 7
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, destino},
+            pc,
+            registradores,
+            limite=3,
+        )
+
+        self.assertEqual(registradores[10], 42)
+        self.assertEqual(registradores[11], 99)
+
+    def test_beq_nao_tomado_executa_delay_slot(self):
+        memoria = RAM()
+        pc = 0x1000
+
+        # BEQ $t0, $t1, destino
+        offset = 3
+        instrucao_beq = (
+            (0x04 << 26)
+            | (8 << 21)
+            | (9 << 16)
+            | offset
+        )
+
+        # ADDIU $t2, $zero, 42 — delay slot
+        instrucao_delay = (0x09 << 26) | (10 << 16) | 42
+
+        # ADDIU $t3, $zero, 99 — caminho sequencial
+        instrucao_sequencial = (0x09 << 26) | (11 << 16) | 99
+
+        destino = pc + 4 + (offset << 2)
+
+        memoria.write_u32(pc, instrucao_beq)
+        memoria.write_u32(pc + 4, instrucao_delay)
+        memoria.write_u32(pc + 8, instrucao_sequencial)
+        memoria.write_u32(destino, 0)
+
+        registradores = [0] * 32
+        registradores[8] = 7
+        registradores[9] = 8
+
+        executar_programa(
+            memoria,
+            {pc, pc + 4, pc + 8, destino},
+            pc,
+            registradores,
+            limite=3,
+        )
+
+        self.assertEqual(registradores[10], 42)
+        self.assertEqual(registradores[11], 99)
+
+    def test_sllv(self):
+        # SLLV: deslocamento à esquerda
+        instrucao = (8 << 21) | (9 << 16) | (10 << 11) | 0x04
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {
+                8: 2,  # rs: quantidade de deslocamento
+                9: 3,  # rt: valor a deslocar
+            },
+        )
+
+        self.assertEqual(registradores[10], 12)
+
+
+    def test_srlv(self):
+        # SRLV: deslocamento lógico à direita
+        instrucao = (8 << 21) | (9 << 16) | (10 << 11) | 0x06
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {
+                8: 2,
+                9: 16,
+            },
+        )
+
+        self.assertEqual(registradores[10], 4)
+
+
+    def test_srav(self):
+        # SRAV: deslocamento aritmético à direita
+        instrucao = (8 << 21) | (9 << 16) | (10 << 11) | 0x07
+
+        registradores = self.executar_instrucao(
+            instrucao,
+            {
+                8: 2,
+                9: 0xFFFFFFF0,  # -16 em complemento de dois
+            },
+        )
+
+        self.assertEqual(registradores[10], 0xFFFFFFFC)
+
+    def test_lwl_alinhamento_zero(self):
+        resultado = executar_lwl_lwr(
+            0x22, 0xAABBCCDD, 0x11223344, 0
+        )
+        self.assertEqual(resultado, 0x44BBCCDD)
+
+
+    def test_lwl_alinhamento_tres(self):
+        resultado = executar_lwl_lwr(
+            0x22, 0xAABBCCDD, 0x11223344, 3
+        )
+        self.assertEqual(resultado, 0x11223344)
+
+
+    def test_lwr_alinhamento_zero(self):
+        resultado = executar_lwl_lwr(
+            0x26, 0xAABBCCDD, 0x11223344, 0
+        )
+        self.assertEqual(resultado, 0x11223344)
+
+
+    def test_lwr_alinhamento_tres(self):
+        resultado = executar_lwl_lwr(
+            0x26, 0xAABBCCDD, 0x11223344, 3
+        )
+        self.assertEqual(resultado, 0xAABBCC11)
+
+    def test_lwl_alinhamento_um(self):
+        resultado = executar_lwl_lwr(
+            0x22, 0xAABBCCDD, 0x11223344, 1
+        )
+        self.assertEqual(resultado, 0x3344CCDD)
+
+
+    def test_lwl_alinhamento_dois(self):
+        resultado = executar_lwl_lwr(
+            0x22, 0xAABBCCDD, 0x11223344, 2
+        )
+        self.assertEqual(resultado, 0x223344DD)
+
+
+    def test_lwr_alinhamento_um(self):
+        resultado = executar_lwl_lwr(
+            0x26, 0xAABBCCDD, 0x11223344, 1
+        )
+        self.assertEqual(resultado, 0xAA112233)
+
+
+    def test_lwr_alinhamento_dois(self):
+        resultado = executar_lwl_lwr(
+            0x26, 0xAABBCCDD, 0x11223344, 2
+        )
+        self.assertEqual(resultado, 0xAABB1122)
+
+    def test_lwl_integrado_memoria(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        # Registrador base aponta para os dados.
+        registradores[1] = endereco_dados
+
+        # Valor inicial do registrador de destino.
+        registradores[2] = 0xAABBCCDD
+
+        # Palavra armazenada em memória.
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWL rt=2, offset=0(rs=1)
+        instrucao = (
+            (0x22 << 26)
+            | (1 << 21)
+            | (2 << 16)
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x44BBCCDD)
+
+    def test_lwr_integrado_memoria(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWR rt=2, offset=0(rs=1)
+        instrucao = (
+            (0x26 << 26)
+            | (1 << 21)
+            | (2 << 16)
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x11223344)
+
+    def test_lwl_integrado_deslocamento_um(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWL rt=2, offset=1(rs=1)
+        instrucao = (
+            (0x22 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 1
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x3344CCDD)
+
+    def test_lwr_integrado_deslocamento_um(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWR rt=2, offset=1(rs=1)
+        instrucao = (
+            (0x26 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 1
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xAA112233)
+    
+
+    def test_lwl_integrado_deslocamento_dois(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWL rt=2, offset=2(rs=1)
+        instrucao = (
+            (0x22 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 2
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x223344DD)
+
+    def test_lwr_integrado_deslocamento_dois(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWR rt=2, offset=2(rs=1)
+        instrucao = (
+            (0x26 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 2
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xAABB1122)
+
+    def test_lwl_integrado_deslocamento_tres(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWL rt=2, offset=3(rs=1)
+        instrucao = (
+            (0x22 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 3
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0x11223344)
+
+
+    def test_lwr_integrado_deslocamento_tres(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # LWR rt=2, offset=3(rs=1)
+        instrucao = (
+            (0x26 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 3
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(registradores[2], 0xAABBCC11)
+
+    def test_lwl_lwr_combinados(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_programa = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+        memoria.write_u32(endereco_dados + 4, 0x55667788)
+
+        # LWR rt=2, 1(rs=1)
+        lwr = (
+            (0x26 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 1
+        )
+
+        # LWL rt=2, 4(rs=1)
+        lwl = (
+            (0x22 << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 4
+        )
+
+        memoria.write_u32(endereco_programa, lwr)
+        memoria.write_u32(endereco_programa + 4, lwl)
+
+        executar_programa(
+            memoria,
+            {endereco_programa, endereco_programa + 4},
+            endereco_programa,
+            registradores,
+            limite=2,
+        )
+
+        self.assertEqual(registradores[2], 0x88112233)
+
+    def test_swl_alinhamento_zero(self):
+        resultado = executar_swl_swr(
+            0x2A, 0xAABBCCDD, 0x11223344, 0
+        )
+        self.assertEqual(resultado, 0x112233AA)
+
+
+    def test_swl_alinhamento_tres(self):
+        resultado = executar_swl_swr(
+            0x2A, 0xAABBCCDD, 0x11223344, 3
+        )
+        self.assertEqual(resultado, 0xAABBCCDD)
+
+
+    def test_swr_alinhamento_zero(self):
+        resultado = executar_swl_swr(
+            0x2E, 0xAABBCCDD, 0x11223344, 0
+        )
+        self.assertEqual(resultado, 0xAABBCCDD)
+
+
+    def test_swr_alinhamento_tres(self):
+        resultado = executar_swl_swr(
+            0x2E, 0xAABBCCDD, 0x11223344, 3
+        )
+        self.assertEqual(resultado, 0xDD223344)
+
+    def test_swl_alinhamento_um(self):
+        resultado = executar_swl_swr(
+            0x2A, 0xAABBCCDD, 0x11223344, 1
+        )
+        self.assertEqual(resultado, 0x1122AABB)
+
+
+    def test_swl_alinhamento_dois(self):
+        resultado = executar_swl_swr(
+            0x2A, 0xAABBCCDD, 0x11223344, 2
+        )
+        self.assertEqual(resultado, 0x11AABBCC)
+
+
+    def test_swr_alinhamento_um(self):
+        resultado = executar_swl_swr(
+            0x2E, 0xAABBCCDD, 0x11223344, 1
+        )
+        self.assertEqual(resultado, 0xBBCCDD44)
+
+
+    def test_swr_alinhamento_dois(self):
+        resultado = executar_swl_swr(
+            0x2E, 0xAABBCCDD, 0x11223344, 2
+        )
+        self.assertEqual(resultado, 0xCCDD3344)
+
+    def test_swl_integrado_deslocamento_zero(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWL rt=2, offset=0(rs=1)
+        instrucao = (
+            (0x2A << 26)
+            | (1 << 21)
+            | (2 << 16)
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0x112233AA,
+        )
+
+    def test_swr_integrado_deslocamento_zero(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWR rt=2, offset=0(rs=1)
+        instrucao = (
+            (0x2E << 26)
+            | (1 << 21)
+            | (2 << 16)
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0xAABBCCDD,
+        )
+
+    def test_swl_integrado_deslocamento_um(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWL rt=2, offset=1(rs=1)
+        instrucao = (
+            (0x2A << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 1
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0x1122AABB,
+        )
+
+    def test_swr_integrado_deslocamento_um(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWR rt=2, offset=1(rs=1)
+        instrucao = (
+            (0x2E << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 1
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0xBBCCDD44,
+        )
+
+    def test_swl_integrado_deslocamento_dois(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWL rt=2, offset=2(rs=1)
+        instrucao = (
+            (0x2A << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 2
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0x11AABBCC,
+        )
+
+    def test_swr_integrado_deslocamento_dois(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        endereco_dados = 0x2000
+
+        registradores[1] = endereco_dados
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(endereco_dados, 0x11223344)
+
+        # SWR rt=2, offset=2(rs=1)
+        instrucao = (
+            (0x2E << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 2
+        )
+
+        memoria.write_u32(endereco_instrucao, instrucao)
+
+        executar_programa(
+            memoria,
+            {endereco_instrucao},
+            endereco_instrucao,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(
+            memoria.read_u32(endereco_dados),
+            0xCCDD3344,
+        )
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
