@@ -1,15 +1,8 @@
 import os
-import sys
 import unittest
 
-PASTA_TESTES = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_TESTES not in sys.path:
-    sys.path.insert(0, PASTA_TESTES)
-
-from mips_exceptions import MIPSException, IntegerOverflow
+from ps1.cpu.mips_exceptions import MIPSException, IntegerOverflow
 
 class TestMIPSExceptions(unittest.TestCase):
 

@@ -1,15 +1,8 @@
 import os
-import sys
 import unittest
 
-PASTA_TESTES = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_TESTES not in sys.path:
-    sys.path.insert(0, PASTA_TESTES)
-
-from branch_helpers import (
+from test.helpers.branch_helpers import (
     encode_i,
     encode_r,
     executar_programa_teste,

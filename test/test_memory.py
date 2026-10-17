@@ -1,23 +1,18 @@
 
 import os
-import sys
 import unittest
 
-PASTA_PROJETO = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
-
-if PASTA_PROJETO not in sys.path:
-    sys.path.insert(0, PASTA_PROJETO)
 
 
-from mips_interpreter import (
+from ps1.cpu.mips_interpreter import (
     encode_i,
     executar_programa,
     EnderecoDesalinhadoError,
 )
-from ram import RAM
-from memory_bus import MemoryBus
+from ps1.cpu.mips_r3000a import CPU
+from ps1.memory.main_ram import RAM
+from ps1 import MemoryBus
+from test.helpers.branch_helpers import executar_programa_teste
 
 
 class TestMemory(unittest.TestCase):
@@ -25,20 +20,11 @@ class TestMemory(unittest.TestCase):
     def executar_instrucao(self, instrucao, valores, memoria=None):
         if memoria is None:
             memoria = RAM()
-
-        registradores = [0] * 32
         endereco_instrucao = 0x1000
-
-        for indice, valor in valores.items():
-            registradores[indice] = valor & 0xFFFFFFFF
-
-        memoria.write_u32(endereco_instrucao, instrucao)
-
-        executar_programa(
-            memoria,
-            {endereco_instrucao},
-            endereco_instrucao,
-            registradores,
+        registradores = executar_programa_teste(
+            {endereco_instrucao: instrucao},
+            valores,
+            memoria=memoria,
             limite=1,
         )
 
@@ -259,6 +245,71 @@ class TestMemory(unittest.TestCase):
 
         self.assertEqual(registradores[8], 42)
 
+    def test_instruction_fetch_na_scratchpad_e_rejeitado(self):
+        memoria = MemoryBus(RAM())
+        registradores = [0] * 32
+        memoria.write_u32(0x1F800000, encode_i(0x09, 0, 8, 42))
+
+        with self.assertRaises(NotImplementedError):
+            executar_programa(
+                memoria,
+                set(),
+                0x1F800000,
+                registradores,
+                limite=1,
+            )
+
+        self.assertEqual(registradores[8], 0)
+
+    def test_falha_de_fetch_preserva_estado_apos_instrucao_concluida(self):
+        memoria = MemoryBus(RAM())
+        cpu = CPU()
+        endereco_instrucao = 0x1F7FFFF8
+        endereco_branch = 0x1F7FFFFC
+        endereco_delay_slot = 0x1F800000
+        destino_branch = 0x1F800008
+
+        # ADDIU $t0, $zero, 42 seguido por BEQ $zero, $zero, +2.
+        memoria.write_u32(endereco_instrucao, encode_i(0x09, 0, 8, 42))
+        memoria.write_u32(endereco_branch, encode_i(0x04, 0, 0, 2))
+        cpu.pc = endereco_instrucao
+
+        with self.assertRaises(NotImplementedError):
+            cpu.executar(memoria, set(), limite=3)
+
+        self.assertEqual(cpu.pc, endereco_delay_slot)
+        self.assertEqual(cpu.registradores[8], 42)
+        self.assertTrue(cpu.estado_delay["delay_slot_ativo"])
+        self.assertEqual(
+            cpu.estado_delay["destino_atrasado"],
+            destino_branch,
+        )
+
+    def test_fallback_de_fetch_usa_read_u32_sem_fetch_u32(self):
+        instrucao = encode_i(0x09, 0, 8, 42)
+
+        class MemoriaInstrumentada:
+            def __init__(self):
+                self.leituras = []
+
+            def read_u32(self, endereco):
+                self.leituras.append(endereco)
+                return instrucao
+
+        memoria = MemoriaInstrumentada()
+        registradores = [0] * 32
+
+        executar_programa(
+            memoria,
+            set(),
+            0x1000,
+            registradores,
+            limite=1,
+        )
+
+        self.assertEqual(memoria.leituras, [0x1000])
+        self.assertEqual(registradores[8], 42)
+
     def test_instruction_fetch_endereco_desalinhado(self):
         ram = RAM()
         memoria = MemoryBus(ram)
@@ -273,7 +324,7 @@ class TestMemory(unittest.TestCase):
                 limite=1,
             )
 
-    def test_instruction_fetch_instrucao_nula(self):
+    def test_instruction_fetch_instrucao_nula_preserva_zero(self):
         ram = RAM()
         memoria = MemoryBus(ram)
         registradores = [0] * 32
@@ -320,6 +371,30 @@ class TestMemory(unittest.TestCase):
         memoria.write_u32(endereco_instrucao, 0xFFFFFFFF)
 
         with self.assertRaises(NotImplementedError):
+            executar_programa(
+                memoria,
+                {endereco_instrucao},
+                endereco_instrucao,
+                registradores,
+                limite=1,
+            )
+
+    def test_instruction_fetch_funct_r_type_nao_implementado(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+        registradores = [0] * 32
+
+        endereco_instrucao = 0x1000
+        instrucao_r_type_nao_implementada = 0x0000003F
+        memoria.write_u32(
+            endereco_instrucao,
+            instrucao_r_type_nao_implementada,
+        )
+
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            r"Instrucao R-type nao implementada: funct=0x3F",
+        ):
             executar_programa(
                 memoria,
                 {endereco_instrucao},

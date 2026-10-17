@@ -1,15 +1,8 @@
 import os
-import sys
 import unittest
 
-PASTA_PROJETO = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_PROJETO not in sys.path:
-    sys.path.insert(0, PASTA_PROJETO)
-
-from mips_interpreter import (
+from ps1.cpu.mips_interpreter import (
     MASCARA_32,
     encode_r,
     encode_i,
@@ -34,29 +27,19 @@ from mips_interpreter import (
     EstadoEspecial,
     IntegerOverflow, 
 )
-from ram import RAM
+from test.helpers.arithmetic_helpers import (
+    executar_instrucao as executar_instrucao_compartilhada,
+)
+from ps1.memory.main_ram import RAM
 
 class TestArithmetic(unittest.TestCase):
 
     def executar_instrucao(self, instrucao, valores):
-        memoria = RAM()
-        registradores = [0] * 32
-        endereco = 0x1000
-
-        for indice, valor in valores.items():
-            registradores[indice] = valor & 0xFFFFFFFF
-
-        memoria.write_u32(endereco, instrucao)
-
-        executar_programa(
-            memoria,
-            {endereco},
-            endereco,
-            registradores,
+        return executar_instrucao_compartilhada(
+            instrucao,
+            valores,
             limite=1,
         )
-
-        return registradores
 
 
     def test_add(self):
@@ -2735,13 +2718,13 @@ class TestArithmetic(unittest.TestCase):
         self.assertEqual(registradores[rd_hi], 0xFFFFFFFE)
         self.assertEqual(registradores[rd_lo], 3)
 
-    def test_div_por_zero_com_dividendo_positivo(self):
+    def test_helper_div_por_zero_com_dividendo_positivo(self):
         hi, lo = executar_divisao(0x1A, 17, 0)
 
         self.assertEqual(hi, 17)
         self.assertEqual(lo, 0xFFFFFFFF)
 
-    def test_div_por_zero_com_dividendo_negativo(self):
+    def test_helper_div_por_zero_com_dividendo_negativo(self):
         dividendo = (-17) & 0xFFFFFFFF
 
         hi, lo = executar_divisao(0x1A, dividendo, 0)
@@ -2749,7 +2732,7 @@ class TestArithmetic(unittest.TestCase):
         self.assertEqual(hi, 0xFFFFFFEF)
         self.assertEqual(lo, 0x00000001)
 
-    def test_divu_por_zero(self):
+    def test_helper_divu_por_zero(self):
         hi, lo = executar_divisao(0x1B, 17, 0)
 
         self.assertEqual(hi, 17)
@@ -4113,8 +4096,67 @@ class TestArithmetic(unittest.TestCase):
             0xCCDD3344,
         )
 
+    def test_swl_deslocamento_tres(self):
+        memoria = RAM()
+        registradores = [0] * 32
 
+        registradores[1] = 0x2000
+        registradores[2] = 0xAABBCCDD
 
+        memoria.write_u32(0x2000, 0x11223344)
+
+        instrucao = (
+            (0x2A << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 3
+        )
+
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            pc_inicial=0x1000,
+            registradores=registradores,
+            limite=1
+        )
+
+        self.assertEqual(
+            memoria.read_u32(0x2000),
+            0xAABBCCDD
+        )
+
+    def test_swr_deslocamento_tres(self):
+        memoria = RAM()
+        registradores = [0] * 32
+
+        registradores[1] = 0x2000
+        registradores[2] = 0xAABBCCDD
+
+        memoria.write_u32(0x2000, 0x11223344)
+
+        instrucao = (
+            (0x2E << 26)
+            | (1 << 21)
+            | (2 << 16)
+            | 3
+        )
+
+        memoria.write_u32(0x1000, instrucao)
+
+        executar_programa(
+            memoria,
+            {0x1000},
+            pc_inicial=0x1000,
+            registradores=registradores,
+            limite=1
+        )
+
+        self.assertEqual(
+            memoria.read_u32(0x2000),
+            0xDD223344
+        )
 
 if __name__ == "__main__":
     unittest.main()

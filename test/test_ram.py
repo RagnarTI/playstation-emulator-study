@@ -1,15 +1,8 @@
 import os
-import sys
 import unittest
 
-PASTA_PROJETO = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_PROJETO not in sys.path:
-    sys.path.insert(0, PASTA_PROJETO)
-
-from ram import RAM
+from ps1.memory.main_ram import RAM
 
 
 class TestRAM(unittest.TestCase):

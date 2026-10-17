@@ -1,12 +1,4 @@
-import os
-import sys
-
-pasta_projeto = os.path.dirname(os.path.abspath(__file__))
-
-if pasta_projeto not in sys.path:
-    sys.path.insert(0, pasta_projeto)
-
-from mips_interpreter import (
+from ps1.cpu.mips_interpreter import (
     MASCARA_32,
     read_u32,
     write_u32,

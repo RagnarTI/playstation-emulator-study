@@ -1,15 +1,7 @@
-import os
-import sys
 
-PASTA_PROJETO = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_PROJETO not in sys.path:
-    sys.path.insert(0, PASTA_PROJETO)
-
-from mips_interpreter import encode_i, encode_r, executar_programa
-from ram import RAM
+from ps1.cpu.mips_interpreter import encode_i, encode_r, executar_programa
+from ps1.memory.main_ram import RAM
 
 
 class MemoriaEsparsa:

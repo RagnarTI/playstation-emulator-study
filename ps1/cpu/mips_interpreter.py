@@ -1,9 +1,7 @@
 
 MASCARA_32 = 0xFFFFFFFF
 
-# ----------------------------------------
-# 1. Codificação das instruções
-# ----------------------------------------
+# !! 1. Codificação das instruções
 def encode_r(rs, rt, rd, funct, shamt=0):
     return (
         (rs << 21)
@@ -21,9 +19,7 @@ def encode_i(opcode, rs, rt, immediate):
         | (immediate & 0xFFFF)
     )
 
-# ----------------------------------------
-# 2. Conversão de valores com sinal
-# ----------------------------------------
+# !! 2. Conversão de valores com sinal
 def signed_32(valor):
     valor &= MASCARA_32
 
@@ -40,16 +36,13 @@ def signed_16(valor):
 
     return valor
 
-# ----------------------------------------
-# 3. Interpretador
-# ----------------------------------------
-from mips_exceptions import *
+# !! 3. Interpretador
+from .mips_exceptions import *
 
 class EstadoEspecial:
     def __init__(self):
         self.hi = 0
         self.lo = 0
-
 
 def decodificar_instrucao(instrucao):
     return {
@@ -61,7 +54,6 @@ def decodificar_instrucao(instrucao):
         "funct": instrucao & 0x3F,
         "immediate": signed_16(instrucao),
     }
-
 
 def executar_operacao_logica(funct, a, b): # !! AND, OR, XOR, NOR
     if funct == 0x24:       # AND
@@ -118,15 +110,13 @@ def executar_soma_subtracao(funct, a, b):  # ADD, SUB
             f"Soma/subtracao nao implementada: 0x{funct:02X}"
         )
 
-def executar_soma_subtracao_sem_overflow(funct, a, b):  # ADDU, SUBU
+def executar_soma_subtracao_sem_overflow(funct, a, b):  # !! ADDU, SUBU
     if funct == 0x21:  # ADDU
         resultado = (a & MASCARA_32) + (b & MASCARA_32)
-
         return resultado & MASCARA_32
 
     elif funct == 0x23:  # SUBU
         resultado = (a & MASCARA_32) - (b & MASCARA_32)
-
         return resultado & MASCARA_32
 
     else:
@@ -134,13 +124,12 @@ def executar_soma_subtracao_sem_overflow(funct, a, b):  # ADDU, SUBU
             f"Soma/subtracao sem overflow nao implementada: 0x{funct:02X}"
         )
 
-
 def executar_comparacao(funct, a, b): # !! STL, SLTU
     if funct == 0x2A:       # SLT
         return 1 if signed_32(a) < signed_32(b) else 0
 
-    elif funct == 0x2B:     # SLTU
-        return 1 if a < b else 0
+    elif funct == 0x2B:  # SLTU
+        return 1 if (a & MASCARA_32) < (b & MASCARA_32) else 0
 
     else:
         raise NotImplementedError(
@@ -165,7 +154,6 @@ def executar_multiplicacao(funct, a, b): # !! MULT, MULTU
     hi = (resultado >> 32) & MASCARA_32
 
     return hi, lo
-
 
 def executar_divisao(funct, a, b): # !! DIV, DIVU
     if funct == 0x1A:       # DIV
@@ -209,8 +197,13 @@ def executar_divisao(funct, a, b): # !! DIV, DIVU
 
     return hi, lo
 
-
-def executar_salto_registrador(funct, destino, pc_atual, no_delay_slot):
+def executar_salto_registrador(
+    funct,
+    destino,
+    pc_atual,
+    no_delay_slot,
+    validar_alinhamento=True,
+):
     if funct not in (0x08, 0x09):
         raise NotImplementedError(
             f"Salto por registrador nao implementado: 0x{funct:02X}"
@@ -225,9 +218,11 @@ def executar_salto_registrador(funct, destino, pc_atual, no_delay_slot):
 
     destino &= MASCARA_32
 
-    if destino % 4 != 0:
+    if validar_alinhamento and destino % 4 != 0:
         raise EnderecoDesalinhadoError(
-            f"Destino de {nome} em endereco desalinhado."
+            f"Destino de {nome} em endereco desalinhado.",
+            endereco=destino,
+            codigo_cop0=None,
         )
 
     link = None
@@ -263,7 +258,6 @@ def executar_addi(valor, immediate):
 def executar_addiu(valor, immediate):
     return (valor + immediate) & MASCARA_32
 
-
 def calcular_endereco_efetivo(
     base,
     immediate,
@@ -273,9 +267,12 @@ def calcular_endereco_efetivo(
     endereco = (base + immediate) & MASCARA_32
 
     if endereco % alinhamento != 0:
+        codigo_cop0 = 5 if instrucao.startswith("S") else 4
         raise EnderecoDesalinhadoError(
             f"{instrucao} em endereco desalinhado: "
-            f"0x{endereco:08X}"
+            f"0x{endereco:08X}",
+            endereco=endereco,
+            codigo_cop0=codigo_cop0,
         )
 
     return endereco
@@ -331,7 +328,6 @@ def executar_lwl_lwr(opcode, valor_registrador, palavra_memoria, endereco):
 
     return resultado & MASCARA_32
 
-
 def executar_swl_swr(opcode, valor_registrador, palavra_memoria, endereco):
     deslocamento = endereco & 0x03
     valor_registrador &= MASCARA_32
@@ -372,16 +368,24 @@ def executar_swl_swr(opcode, valor_registrador, palavra_memoria, endereco):
 
     return resultado & MASCARA_32
 
-
 def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
-                    limite=100, estado_especial=None, retornar_pc=False ):
+                    limite=100, estado_especial=None, retornar_pc=False, estado_delay=None, um_passo=False, cop0=None, estado_execucao=None, adiar_erro_destino_desalinhado=False, ):
 
     pc = pc_inicial
     passos = 0
 
+    if estado_execucao is not None:
+        estado_execucao["pc"] = pc
+
     # Controla o branch delay slot.
-    delay_slot_ativo = False
-    destino_atrasado = None
+    if estado_delay is None:
+        estado_delay = {
+            "delay_slot_ativo": False,
+            "destino_atrasado": None,
+        }
+
+    delay_slot_ativo = estado_delay["delay_slot_ativo"]
+    destino_atrasado = estado_delay["destino_atrasado"]
 
     if estado_especial is None:
         estado_especial = EstadoEspecial()
@@ -390,7 +394,18 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
         pc_atual = pc
 
         # Fetch
-        instrucao = memoria.read_u32(pc_atual)
+        if pc_atual & 0x03:
+            raise EnderecoDesalinhadoError(
+                f"Fetch em endereco desalinhado: 0x{pc_atual:08X}",
+                endereco=pc_atual,
+                codigo_cop0=4,
+            )
+
+        buscar_instrucao = getattr(memoria, "fetch_u32", None)
+        if callable(buscar_instrucao):
+            instrucao = buscar_instrucao(pc_atual)
+        else:
+            instrucao = memoria.read_u32(pc_atual)
 
         # Guarda o estado do branch anterior.
         no_delay_slot = delay_slot_ativo
@@ -438,12 +453,25 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
                 if rd != 0:
                     registradores[rd] = resultado
 
+            # !! JR, JARL
             elif funct in (0x08, 0x09):
                 destino_salto, link = executar_salto_registrador(
                     funct,
                     a,
                     pc_atual,
                     no_delay_slot,
+                    validar_alinhamento=(
+                        not adiar_erro_destino_desalinhado
+                    ),
+                )
+
+                destino_atrasado = destino_salto
+                delay_slot_ativo = True
+
+                print(
+                    f"[JR] PC=0x{pc_atual:08X} "
+                    f"destino_salto=0x{destino_salto:08X} "
+                    f"delay_slot_ativo={delay_slot_ativo}"
                 )
 
                 if funct == 0x09 and rd != 0:
@@ -492,6 +520,13 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
 
                 if rd != 0:
                     registradores[rd] = resultado
+
+                print(
+                    f"[SLTU] PC=0x{pc_atual:08X} "
+                    f"$2=0x{registradores[2]:08X} "
+                    f"$3=0x{registradores[3]:08X} "
+                    f"$1=0x{registradores[1]:08X}"
+                )
             
             elif funct in (0x18, 0x19):
                 hi, lo = executar_multiplicacao(funct, a, b)
@@ -504,6 +539,18 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
 
                 estado_especial.hi = hi
                 estado_especial.lo = lo
+
+            elif funct == 0x0C:  # SYSCALL
+                raise SyscallError("Excecao SYSCALL")
+
+            elif funct == 0x0D:  # BREAK
+                raise BreakpointError("Excecao BREAK")
+
+            else:
+                raise InstrucaoReservadaError(
+                    f"Instrucao R-type nao implementada: "
+                    f"funct=0x{funct:02X}"
+                )
 
         # !! J - Jump
         elif opcode == 0x02:
@@ -543,6 +590,12 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
             if rt != 0:
                 registradores[rt] = resultado
 
+            if rt == 10:
+                print(
+                    f"[T2] PC=0x{pc_atual:08X} "
+                    f"$t2=0x{registradores[10]:08X}"
+                )
+
         # !! ADDIU
         elif opcode == 0x09:
             resultado = executar_addiu(
@@ -552,6 +605,48 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
 
             if rt != 0:
                 registradores[rt] = resultado
+
+        # !! COP0
+        elif opcode == 0x10:
+            if cop0 is None:
+                raise RuntimeError(
+                    "COP0 nao foi conectado ao interpretador"
+                )
+
+            # MFC0: Move From Coprocessor 0
+            if rs == 0x00 and (instrucao & 0x7FF) == 0:
+                if rd in cop0.INDICES_LEITURA_RESERVADA:
+                    raise InstrucaoReservadaError(
+                        f"Leitura MFC0 do registrador COP0 {rd} reservada."
+                    )
+
+                valor = cop0.ler_registrador(rd)
+
+                if rt != 0:
+                    registradores[rt] = valor
+
+            # MTC0: Move To Coprocessor 0
+            elif rs == 0x04 and (instrucao & 0x7FF) == 0:
+                valor = registradores[rt]
+                cop0.escrever_registrador(rd, valor)
+
+            # RFE: Restore From Exception
+            elif (
+                rs == 0x10
+                and rt == 0
+                and rd == 0
+                and shamt == 0
+                and funct == 0x10
+            ):
+                cop0.rfe()
+
+            else:
+                raise InstrucaoReservadaError(
+                    f"Instrucao COP0 nao implementada: "
+                    f"rs=0x{rs:X}, funct=0x{funct:X}"
+                )
+
+            registradores[0] = 0
 
         # !! SLTI
         elif opcode == 0x0A:
@@ -636,11 +731,26 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
 
         # !! SW
         elif opcode == 0x2B:
+
+            # print(f"rs = {rs}, valor = 0x{registradores[rs]:08X}")
+            # print(f"rt = {rt}, valor = 0x{registradores[rt]:08X}")
+            # print(f"Instrucao = 0x{instrucao:08X}")
+
             endereco = calcular_endereco_efetivo(
                 registradores[rs],
                 immediate,
                 "SW",
             )
+
+            if 0xBFC00230 <= pc_atual <= 0xBFC00250:
+                print(
+                    f"PC=0x{pc_atual:08X} "
+                    f"Instrucao=0x{instrucao:08X} "
+                    f"opcode=0x{opcode:02X} "
+                    f"rs={rs} rt={rt} rd={rd} "
+                    f"immediate=0x{immediate & 0xFFFF:04X} "
+                    f"$t2=0x{registradores[10]:08X}"
+                )
 
             memoria.write_u32(
                 endereco,
@@ -819,7 +929,6 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
 
             memoria.write_u32(endereco_alinhado, resultado)
 
-
         # !! BEQ
         elif opcode == 0x04:
             if no_delay_slot:
@@ -828,12 +937,25 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
                 )
 
             delay_slot_ativo = True
+            desvio_tomado = registradores[rs] == registradores[rt]
 
-            if registradores[rs] == registradores[rt]:
+            destino_log = None
+
+            if desvio_tomado:
                 destino_atrasado = calcular_destino_desvio(
                     pc_atual,
                     immediate,
                 )
+                destino_log = destino_atrasado
+
+            print(
+                f"[BEQ] PC=0x{pc_atual:08X} "
+                f"rs=${rs}=0x{registradores[rs]:08X} "
+                f"rt=${rt}=0x{registradores[rt]:08X} "
+                f"tomado={desvio_tomado} "
+                f"destino="
+                f"{f'0x{destino_log:08X}' if destino_log is not None else 'N/A'}"
+            )
 
         # !! BNE
         elif opcode == 0x05:
@@ -843,17 +965,30 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
                 )
 
             delay_slot_ativo = True
+            desvio_tomado = registradores[rs] != registradores[rt]
 
-            if registradores[rs] != registradores[rt]:
+            destino_log = None
+
+            if desvio_tomado:
                 destino_atrasado = calcular_destino_desvio(
                     pc_atual,
                     immediate,
                 )
+                destino_log = destino_atrasado
+
+            print(
+                f"[BNE] PC=0x{pc_atual:08X} "
+                f"rs=${rs}=0x{registradores[rs]:08X} "
+                f"rt=${rt}=0x{registradores[rt]:08X} "
+                f"tomado={desvio_tomado} "
+                f"destino="
+                f"{f'0x{destino_log:08X}' if destino_log is not None else 'N/A'}"
+            )
 
         # !! BLEZ
         elif opcode == 0x06:
             if rt != 0:
-                raise NotImplementedError(
+                raise InstrucaoReservadaError(
                     "BLEZ com campo rt invalido."
                 )
 
@@ -873,7 +1008,7 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
         # !! BGTZ
         elif opcode == 0x07:
             if rt != 0:
-                raise NotImplementedError(
+                raise InstrucaoReservadaError(
                     "BGTZ com campo rt invalido."
                 )
             
@@ -962,13 +1097,31 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
                     )
 
             else:
-                raise NotImplementedError(
+                raise InstrucaoReservadaError(
                     f"REGIMM nao implementado: rt=0x{rt:02X}"
                 )
 
         else:
-            raise NotImplementedError(
-                f"Opcode nao implementado: 0x{opcode:02X}"
+            print(f"PC:        0x{pc_atual:08X}")
+            print(f"Instrução: 0x{instrucao:08X}")
+            print(f"Opcode:    0x{opcode:02X}")
+            print(f"rs:        {rs}")
+            print(f"rt:        {rt}")
+            print(f"rd:        {rd}")
+            print(f"funct:     0x{funct:02X}")
+
+            if opcode in (
+                0x11, 0x12, 0x13,  # COP1, COP2, COP3
+                0x30, 0x31, 0x32, 0x33, 0x35,  # LWCz
+                0x38, 0x39, 0x3A, 0x3B, 0x3D,  # SWCz
+            ):
+                raise NotImplementedError(
+                    f"Opcode de coprocessador nao implementado: "
+                    f"0x{opcode:02X}"
+                )
+
+            raise InstrucaoReservadaError(
+                f"Opcode reservado: 0x{opcode:02X}"
             )
 
         # $zero sempre deve continuar valendo zero.
@@ -979,8 +1132,36 @@ def executar_programa( memoria, enderecos_programa, pc_inicial, registradores,
         if no_delay_slot and destino is not None:
             proximo_pc = destino
 
+        if pc_atual in (0xBFC039A4, 0xBFC039A8, 0xBFC01A78):
+            print(
+                f"[A-RETORNO] PC=0x{pc_atual:08X} "
+                f"instrucao=0x{instrucao:08X} "
+                f"no_delay_slot={no_delay_slot} "
+                f"destino={destino} "
+                f"proximo_pc=0x{proximo_pc:08X}"
+            )
+
         pc = proximo_pc
         passos += 1
+
+        if estado_execucao is not None:
+            estado_execucao["pc"] = pc
+
+        if pc_atual in (0xBFC039A4, 0xBFC039A8, 0xBFC01A78):
+            print(
+                f"[B-RETORNO] PC=0x{pc_atual:08X} "
+                f"instrucao=0x{instrucao:08X} "
+                f"no_delay_slot={no_delay_slot} "
+                f"destino={destino} "
+                f"proximo_pc=0x{proximo_pc:08X}"
+            )
+
+        estado_delay["delay_slot_ativo"] = delay_slot_ativo
+        estado_delay["destino_atrasado"] = destino_atrasado
+
+        if um_passo:
+            print(f"[FIM-LOOP] PC=0x{pc:08X} passos={passos}")
+            break
 
     if passos >= limite:
         print("\nLimite de instrucoes atingido.")

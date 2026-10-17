@@ -1,16 +1,10 @@
 import os
-import sys
 import unittest
 
-PASTA_PROJETO = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_PROJETO not in sys.path:
-    sys.path.insert(0, PASTA_PROJETO)
-
-from ram import RAM
-from memory_bus import MemoryBus
+from ps1.memory.main_ram import RAM
+from ps1 import MemoryBus
+from ps1.memory.bios_rom import BIOS
 
 
 class TestMemoryBus(unittest.TestCase):
@@ -65,12 +59,50 @@ class TestMemoryBus(unittest.TestCase):
 
         self.assertEqual(resultado, 0xABCDEF12)
 
-    def test_endereco_fisico_fora_da_ram_gera_erro(self):
+    def test_endereco_fisico_apos_espelho_da_ram_gera_erro(self):
         ram = RAM()
         memoria = MemoryBus(ram)
 
         with self.assertRaises(ValueError):
-            memoria.read_u32(0x00200000)
+            memoria.read_u32(0x00800000)
+
+    def test_espelhamento_da_ram_compartilha_os_mesmos_bytes(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+        memoria.write_u32(0x00001000, 0x12345678)
+
+        self.assertEqual(memoria.read_u32(0x00201000), 0x12345678)
+        self.assertEqual(memoria.read_u32(0x00401000), 0x12345678)
+        self.assertEqual(memoria.read_u32(0x00601000), 0x12345678)
+        self.assertEqual(memoria.read_u32(0x80201000), 0x12345678)
+        self.assertEqual(memoria.read_u32(0xA0601000), 0x12345678)
+
+    def test_espelhamento_da_ram_inclui_ultimo_byte_e_limite_final(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+
+        memoria.write_u8(0x007FFFFF, 0xA5)
+
+        self.assertEqual(ram.read_u8(0x001FFFFF), 0xA5)
+        self.assertEqual(memoria.read_u8(0x001FFFFF), 0xA5)
+        with self.assertRaises(ValueError):
+            memoria.read_u8(0x00800000)
+
+    def test_leitura_e_escrita_nas_fronteiras_dos_espelhos(self):
+        ram = RAM()
+        memoria = MemoryBus(ram)
+
+        for indice, fronteira in enumerate((0x00200000, 0x00400000, 0x00600000)):
+            valor_inicio = 0x12345678 + indice
+            valor_fim = 0xABCDEF00 + indice
+
+            memoria.write_u32(fronteira, valor_inicio)
+            self.assertEqual(ram.read_u32(0), valor_inicio)
+            self.assertEqual(memoria.read_u32(fronteira), valor_inicio)
+
+            memoria.write_u32(0x001FFFFC, valor_fim)
+            self.assertEqual(memoria.read_u32(fronteira - 4), valor_fim)
+            self.assertEqual(ram.read_u32(0x001FFFFC), valor_fim)
 
     def test_scratchpad_armazena_e_le_valor(self):
         ram = RAM()
@@ -81,6 +113,31 @@ class TestMemoryBus(unittest.TestCase):
         resultado = memoria.read_u32(0x1F800000)
 
         self.assertEqual(resultado, 0x12345678)
+
+    def test_scratchpad_e_acessivel_por_kuseg_e_kseg0(self):
+        memoria = MemoryBus(RAM())
+
+        memoria.write_u32(0x1F800010, 0x12345678)
+
+        self.assertEqual(memoria.read_u32(0x9F800010), 0x12345678)
+        memoria.write_u32(0x9F800010, 0xAABBCCDD)
+        self.assertEqual(memoria.read_u32(0x1F800010), 0xAABBCCDD)
+
+    def test_scratchpad_nao_tem_alias_em_kseg1(self):
+        memoria = MemoryBus(RAM())
+
+        with self.assertRaises(ValueError):
+            memoria.read_u32(0xBF800000)
+        with self.assertRaises(ValueError):
+            memoria.write_u32(0xBF800000, 0x12345678)
+
+    def test_fetch_nao_le_scratchpad_mas_load_de_dados_e_permitido(self):
+        memoria = MemoryBus(RAM())
+        memoria.write_u32(0x1F800000, 0x12345678)
+
+        self.assertEqual(memoria.read_u32(0x1F800000), 0x12345678)
+        with self.assertRaises(NotImplementedError):
+            memoria.fetch_u32(0x1F800000)
 
     def test_scratchpad_rejeita_acesso_fora_dos_limites(self):
         ram = RAM()
@@ -217,33 +274,33 @@ class TestMemoryBus(unittest.TestCase):
         with self.assertRaises(ValueError):
             memoria.write_u16(0x1FFFFF, 0x1234)
 
-    def test_ram_rejeita_escrita_u8_fora_dos_limites(self):
+    def test_ram_rejeita_escrita_u8_apos_o_espelho(self):
         ram = RAM()
         memoria = MemoryBus(ram)
 
         with self.assertRaises(ValueError):
-            memoria.write_u8(0x200000, 0xAB)
+            memoria.write_u8(0x800000, 0xAB)
 
-    def test_ram_rejeita_leitura_u8_fora_dos_limites(self):
+    def test_ram_rejeita_leitura_u8_apos_o_espelho(self):
         ram = RAM()
         memoria = MemoryBus(ram)
 
         with self.assertRaises(ValueError):
-            memoria.read_u8(0x200000)
+            memoria.read_u8(0x800000)
  
-    def test_kseg0_rejeita_leitura_fora_dos_limites_da_ram(self):
+    def test_kseg0_rejeita_leitura_apos_o_espelho_da_ram(self):
         ram = RAM()
         memoria = MemoryBus(ram)
 
         with self.assertRaises(ValueError):
-            memoria.read_u8(0x80200000)
+            memoria.read_u8(0x80800000)
     
-    def test_kseg1_rejeita_leitura_fora_dos_limites_da_ram(self):
+    def test_kseg1_rejeita_leitura_apos_o_espelho_da_ram(self):
         ram = RAM()
         memoria = MemoryBus(ram)
 
         with self.assertRaises(ValueError):
-            memoria.read_u8(0xA0200000)
+            memoria.read_u8(0xA0800000)
 
     def test_kseg0_e_kseg1_compartilham_a_mesma_memoria_fisica(self):
         ram = RAM()
@@ -428,6 +485,114 @@ class TestMemoryBus(unittest.TestCase):
 
         self.assertEqual(ram.leituras, [])
 
+
+    def test_leitura_bios_endereco_fisico(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as arquivo:
+            arquivo.write(bytes(BIOS.TAMANHO))
+            caminho = arquivo.name
+
+        try:
+            with open(caminho, "r+b") as arquivo:
+                arquivo.write(b"\x78\x56\x34\x12")
+
+            bios = BIOS(caminho)
+            memoria = MemoryBus(RAM(), bios)
+
+            self.assertEqual(
+                memoria.read_u32(0x1FC00000),
+                0x12345678
+            )
+        finally:
+            os.unlink(caminho)
+
+    def test_leitura_bios_endereco_virtual(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as arquivo:
+            arquivo.write(bytes(BIOS.TAMANHO))
+            caminho = arquivo.name
+
+        try:
+            with open(caminho, "r+b") as arquivo:
+                arquivo.write(b"\x78\x56\x34\x12")
+
+            bios = BIOS(caminho)
+            memoria = MemoryBus(RAM(), bios)
+
+            self.assertEqual(
+                memoria.read_u32(0xBFC00000),
+                0x12345678
+            )
+        finally:
+            os.unlink(caminho)
+
+    def test_escrita_bios_endereco_fisico_rejeitada(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as arquivo:
+            arquivo.write(bytes(BIOS.TAMANHO))
+            caminho = arquivo.name
+
+        try:
+            bios = BIOS(caminho)
+            memoria = MemoryBus(RAM(), bios)
+
+            with self.assertRaises(PermissionError):
+                memoria.write_u32(0x1FC00000, 0x12345678)
+        finally:
+            os.unlink(caminho)
+
+    def test_escrita_bios_endereco_virtual_rejeitada(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as arquivo:
+            arquivo.write(bytes(BIOS.TAMANHO))
+            caminho = arquivo.name
+
+        try:
+            bios = BIOS(caminho)
+            memoria = MemoryBus(RAM(), bios)
+
+            with self.assertRaises(PermissionError):
+                memoria.write_u32(0xBFC00000, 0x12345678)
+        finally:
+            os.unlink(caminho)
+
+    def test_leitura_bios_fora_dos_limites(self):
+        bios = None
+        memoria = MemoryBus(RAM(), bios)
+
+        with self.assertRaises(ValueError):
+            memoria.read_u32(0x1FC80000)
+
+    def test_leitura_bios_sem_dispositivo_conectado_gera_erro_explicito(self):
+        memoria = MemoryBus(RAM())
+
+        with self.assertRaisesRegex(RuntimeError, "BIOS nao foi conectada"):
+            memoria.read_u32(0x1FC00000)
+
+    def test_leitura_bios_que_atravessa_limite(self):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as arquivo:
+            arquivo.write(bytes(BIOS.TAMANHO))
+            caminho = arquivo.name
+
+        try:
+            bios = BIOS(caminho)
+            memoria = MemoryBus(RAM(), bios)
+
+            with self.assertRaises(ValueError):
+                memoria.read_u32(0x1FC7FFFE)
+        finally:
+            os.unlink(caminho)
 
 
 if __name__ == "__main__":

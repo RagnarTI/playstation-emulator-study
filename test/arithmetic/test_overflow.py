@@ -1,15 +1,8 @@
 import os
-import sys
 import unittest
 
-PASTA_TESTES = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
 
-if PASTA_TESTES not in sys.path:
-    sys.path.insert(0, PASTA_TESTES)
-
-from arithmetic_helpers import (
+from test.helpers.arithmetic_helpers import (
     encode_r,
     encode_i,
     signed_32,
